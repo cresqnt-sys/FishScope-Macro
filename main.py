@@ -10,9 +10,10 @@ import os
 import sys
 from PyQt6.QtWidgets import (QApplication, QMainWindow, QVBoxLayout, QHBoxLayout,
                             QWidget, QPushButton, QLabel, QFrame, QScrollArea,
-                            QMessageBox)
+                            QMessageBox, QGroupBox)
 from PyQt6.QtCore import Qt, QTimer, pyqtSignal, QObject, QPoint
-from PyQt6.QtGui import QFont, QCursor, QPainter, QPen, QColor
+from PyQt6.QtGui import QFont, QCursor, QPainter, QPen, QColor, QIcon
+from updater import AutoUpdater
 
 pyautogui.FAILSAFE = False
 
@@ -35,15 +36,23 @@ class MouseAutomation:
             'first_item': (825, 408),
             'sell_button': (595, 806),
             'confirm_button': (805, 618),
-            'mouse_idle_position': (self.screen_width // 2, self.screen_height // 2)
+            'mouse_idle_position': (self.screen_width // 2, self.screen_height // 2),
+            'shaded_area': (900, 800)  # Default shaded area location
         }
+
+        # Default shaded color (teal/green) - will be overridden by dynamic detection
+        self.shaded_color = (109, 198, 164)
 
         self.load_calibration()
 
     def save_calibration(self):
         try:
+            config_data = {
+                'coordinates': self.coordinates,
+                'shaded_color': self.shaded_color
+            }
             with open(self.config_file, 'w') as f:
-                json.dump(self.coordinates, f, indent=2)
+                json.dump(config_data, f, indent=2)
             print("Calibration auto-saved successfully!")
         except Exception as e:
             print(f"Error saving calibration: {e}")
@@ -52,8 +61,18 @@ class MouseAutomation:
         try:
             if os.path.exists(self.config_file):
                 with open(self.config_file, 'r') as f:
-                    saved_coords = json.load(f)
-                    self.coordinates.update(saved_coords)
+                    saved_data = json.load(f)
+
+                    # Handle both old format (just coordinates) and new format (with shaded_color)
+                    if isinstance(saved_data, dict) and 'coordinates' in saved_data:
+                        # New format
+                        self.coordinates.update(saved_data['coordinates'])
+                        if 'shaded_color' in saved_data:
+                            self.shaded_color = tuple(saved_data['shaded_color'])
+                    else:
+                        # Old format - just coordinates
+                        self.coordinates.update(saved_data)
+
                 print("Calibration loaded successfully!")
             else:
                 print("No saved calibration found, using defaults")
@@ -164,6 +183,7 @@ class MouseAutomation:
         screenshot = ImageGrab.grab(bbox=(x1, y1, x2, y2))
         width, height = screenshot.size
 
+        # Check every pixel for better detection
         for y in range(height):
             for x in range(width):
                 pixel = screenshot.getpixel((x, y))
@@ -171,8 +191,36 @@ class MouseAutomation:
                     return (x1 + x, y1 + y)
         return None
 
+    def find_pixel_color_enhanced(self, x1, y1, x2, y2, target_color, tolerance=15):
+        """Enhanced color detection that checks more thoroughly"""
+        screenshot = ImageGrab.grab(bbox=(x1, y1, x2, y2))
+        width, height = screenshot.size
+
+        matches = 0
+        total_pixels = 0
+
+        # Check every 2nd pixel for speed while maintaining coverage
+        for y in range(0, height, 2):
+            for x in range(0, width, 2):
+                pixel = screenshot.getpixel((x, y))
+                total_pixels += 1
+                if self.color_match(pixel, target_color, tolerance):
+                    matches += 1
+                    # If we find enough matches, return immediately
+                    if matches >= 3:
+                        return (x1 + x, y1 + y)
+
+        return None
+
     def color_match(self, color1, color2, tolerance):
         return all(abs(c1 - c2) <= tolerance for c1, c2 in zip(color1, color2))
+
+    def detect_current_shaded_color(self):
+        """Detect the current shaded color from the calibrated shaded area location."""
+        shaded_x, shaded_y = self.coordinates['shaded_area']
+        current_shaded_color = self.get_average_pixel_color(shaded_x, shaded_y, radius=2)
+        print(f"Detected current shaded color: {current_shaded_color}")
+        return current_shaded_color
 
     def mouse_automation_loop(self):
         while self.running and self.toggle:
@@ -197,6 +245,8 @@ class MouseAutomation:
                 color = self.get_average_pixel_color(check_x, check_y, radius=1)
 
                 if self.is_white_pixel(color, tolerance=15):
+                    # Detect the current shaded color for this minigame
+                    self.shaded_color = self.detect_current_shaded_color()
                     pyautogui.moveTo(idle_x, idle_y, duration=0.5, tween=pyautogui.easeInOutQuad)
                     break
 
@@ -210,12 +260,19 @@ class MouseAutomation:
                     break
 
                 search_area = self.coordinates['reel_bar']
-                found_pos = self.find_pixel_color(*search_area, (109, 198, 164), 1)
+                found_pos = self.find_pixel_color_enhanced(*search_area, self.shaded_color, 25)
 
                 if found_pos is None:
-                    pyautogui.click()
-                    border_x, border_y = self.coordinates['completed_border']
-                    color = self.get_pixel_color(border_x, border_y)
+                    # Shaded color not detected - click at 20 CPS
+                    autoit.mouse_click("left")
+                    time.sleep(0.05)  # 20 clicks per second when not detected
+                else:
+                    # Shaded color detected - don't click, but check frequently
+                    time.sleep(0.01)  # Check 100 times per second when detected
+
+                # Check for completion border
+                border_x, border_y = self.coordinates['completed_border']
+                color = self.get_pixel_color(border_x, border_y)
 
             time.sleep(0.3)
 
@@ -404,9 +461,13 @@ class CalibrationUI(QMainWindow):
         self.reel_bar_step = 1
         self.reel_bar_coords = []
 
+        # Initialize auto updater
+        self.auto_updater = AutoUpdater(self)
+
         self.coord_labels = {
             'fish_button': 'Fish Button - Click to start fishing',
             'white_diamond': 'White Diamond - Pixel that turns white when fish is caught',
+            'shaded_area': 'Shaded Area - Pixel location to sample shaded color from each minigame',
             'reel_bar': 'Reel Bar - The Reel progress bar',
             'completed_border': 'Completed Border - A pixel of the completed screen border',
             'close_button': 'Close Button - Close the sucuessfully caught fish',
@@ -418,237 +479,343 @@ class CalibrationUI(QMainWindow):
 
         self.coord_labels_widgets = {}
         self.setup_ui()
-        self.apply_dark_theme()
+        self.apply_clean_theme()
 
-    def apply_dark_theme(self):
+    def apply_clean_theme(self):
         self.setStyleSheet("""
             QMainWindow {
-                background-color: #1e1e1e;
-                color: #ffffff;
+                background-color: #1a1a1a;
+                color: #e0e0e0;
+                font-family: 'Segoe UI', Arial, sans-serif;
             }
             QLabel {
-                color: #ffffff;
+                color: #e0e0e0;
                 background-color: transparent;
             }
             QPushButton {
-                background-color: #4a4a4a;
-                color: white;
-                border: 1px solid #666666;
+                background-color: #2d2d2d;
+                color: #e0e0e0;
+                border: 1px solid #404040;
                 padding: 8px 16px;
-                border-radius: 4px;
-                font-weight: bold;
+                border-radius: 6px;
+                font-weight: 500;
+                font-size: 13px;
             }
             QPushButton:hover {
-                background-color: #5a5a5a;
+                background-color: #3a3a3a;
+                border-color: #555555;
             }
             QPushButton:pressed {
-                background-color: #3a3a3a;
+                background-color: #252525;
+                border-color: #606060;
             }
             QFrame {
                 background-color: #2d2d2d;
-                border: 1px solid #444444;
-                border-radius: 4px;
+                border: 1px solid #404040;
+                border-radius: 8px;
             }
             QScrollArea {
-                background-color: #1e1e1e;
-                border: none;
+                background-color: #1a1a1a;
+                border: 1px solid #404040;
+                border-radius: 6px;
+            }
+            QScrollArea QWidget {
+                background-color: #2d2d2d;
+            }
+            QGroupBox {
+                font-weight: 600;
+                font-size: 14px;
+                color: #e0e0e0;
+                border: 2px solid #404040;
+                border-radius: 8px;
+                margin-top: 10px;
+                padding-top: 10px;
+            }
+            QGroupBox::title {
+                subcontrol-origin: margin;
+                left: 10px;
+                padding: 0 8px 0 8px;
+                background-color: #1a1a1a;
             }
         """)
 
     def setup_ui(self):
-        self.setWindowTitle("FishScope")
-        self.setFixedSize(550, 750)
+        self.setWindowTitle("FishScope Macro")
+        self.setFixedSize(600, 850)
+
+        # Set application icon
+        if os.path.exists("icon.ico"):
+            self.setWindowIcon(QIcon("icon.ico"))
 
         central_widget = QWidget()
         self.setCentralWidget(central_widget)
 
         main_layout = QVBoxLayout(central_widget)
-        main_layout.setSpacing(10)
-        main_layout.setContentsMargins(15, 15, 15, 15)
+        main_layout.setSpacing(16)
+        main_layout.setContentsMargins(20, 20, 20, 20)
 
-        title_label = QLabel("FishScope")
-        title_font = QFont("Arial", 24, QFont.Weight.Bold)
+        # Header Section
+        header_layout = QVBoxLayout()
+        header_layout.setSpacing(8)
+
+        title_label = QLabel("FishScope Macro")
+        title_font = QFont("Segoe UI", 22, QFont.Weight.Bold)
         title_label.setFont(title_font)
         title_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        title_label.setStyleSheet("color: #ffffff; margin: 10px;")
-        main_layout.addWidget(title_label)
+        title_label.setStyleSheet("color: #ffffff; margin: 8px 0;")
+        header_layout.addWidget(title_label)
 
-        hotkey_frame = QFrame()
-        hotkey_layout = QVBoxLayout(hotkey_frame)
-        hotkey_layout.setContentsMargins(15, 10, 15, 10)
+        subtitle_label = QLabel('<a href="https://www.roblox.com/games/1980495071/Donations-D" style="color: #4a9eff; text-decoration: none;">Feel free to donate</a>')
+        subtitle_font = QFont("Segoe UI", 9)
+        subtitle_label.setFont(subtitle_font)
+        subtitle_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        subtitle_label.setStyleSheet("color: #888888; margin-bottom: 12px;")
+        subtitle_label.setOpenExternalLinks(True)
+        header_layout.addWidget(subtitle_label)
 
-        hotkey_title = QLabel("Hotkeys:")
-        hotkey_title.setFont(QFont("Arial", 12, QFont.Weight.Bold))
-        hotkey_layout.addWidget(hotkey_title)
+        main_layout.addLayout(header_layout)
+
+        # Control Section
+        control_group = QGroupBox("Macro Controls")
+        control_layout = QVBoxLayout(control_group)
+        control_layout.setSpacing(12)
+        control_layout.setContentsMargins(16, 20, 16, 16)
+
+        # Hotkey info
+        hotkey_info_layout = QHBoxLayout()
+        hotkey_info_layout.setSpacing(20)
 
         f1_label = QLabel("F1 - Start Macro")
-        f1_label.setStyleSheet("color: #00ff00; margin-left: 20px;")
-        hotkey_layout.addWidget(f1_label)
+        f1_label.setStyleSheet("color: #28a745; font-weight: 500; font-size: 12px;")
+        hotkey_info_layout.addWidget(f1_label)
 
         f2_label = QLabel("F2 - Stop Macro")
-        f2_label.setStyleSheet("color: #ff4444; margin-left: 20px;")
-        hotkey_layout.addWidget(f2_label)
+        f2_label.setStyleSheet("color: #dc3545; font-weight: 500; font-size: 12px;")
+        hotkey_info_layout.addWidget(f2_label)
 
-        main_layout.addWidget(hotkey_frame)
+        hotkey_info_layout.addStretch()
+        control_layout.addLayout(hotkey_info_layout)
 
-        control_layout = QHBoxLayout()
-        control_layout.setSpacing(10)
+        # Control buttons
+        button_layout = QHBoxLayout()
+        button_layout.setSpacing(12)
 
-        self.start_btn = QPushButton("Start Macro (F1)")
+        self.start_btn = QPushButton("Start Macro")
         self.start_btn.clicked.connect(self.automation.start_automation)
         self.start_btn.setStyleSheet("""
             QPushButton {
-                background-color: #00aa00;
+                background-color: #28a745;
                 color: white;
-                font-weight: bold;
-                padding: 12px 20px;
-                font-size: 11px;
+                font-weight: 600;
+                padding: 12px 24px;
+                font-size: 14px;
+                border: none;
+                border-radius: 6px;
             }
             QPushButton:hover {
-                background-color: #00cc00;
+                background-color: #218838;
+            }
+            QPushButton:pressed {
+                background-color: #1e7e34;
             }
         """)
-        control_layout.addWidget(self.start_btn)
+        button_layout.addWidget(self.start_btn)
 
-        self.stop_btn = QPushButton("Stop Macro (F2)")
+        self.stop_btn = QPushButton("Stop Macro")
         self.stop_btn.clicked.connect(self.automation.stop_automation)
         self.stop_btn.setStyleSheet("""
             QPushButton {
-                background-color: #aa0000;
+                background-color: #dc3545;
                 color: white;
-                font-weight: bold;
-                padding: 12px 20px;
-                font-size: 11px;
+                font-weight: 600;
+                padding: 12px 24px;
+                font-size: 14px;
+                border: none;
+                border-radius: 6px;
             }
             QPushButton:hover {
-                background-color: #cc0000;
+                background-color: #c82333;
+            }
+            QPushButton:pressed {
+                background-color: #bd2130;
             }
         """)
-        control_layout.addWidget(self.stop_btn)
+        button_layout.addWidget(self.stop_btn)
 
-        main_layout.addLayout(control_layout)
+        control_layout.addLayout(button_layout)
+        main_layout.addWidget(control_group)
 
-        calib_label = QLabel("Coordinate Calibration")
-        calib_font = QFont("Arial", 14, QFont.Weight.Bold)
-        calib_label.setFont(calib_font)
-        calib_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        calib_label.setStyleSheet("margin: 20px 0 10px 0;")
-        main_layout.addWidget(calib_label)
+        # Calibration Section
+        calibration_group = QGroupBox("Coordinate Calibration")
+        calibration_layout = QVBoxLayout(calibration_group)
+        calibration_layout.setContentsMargins(16, 20, 16, 16)
+        calibration_layout.setSpacing(8)
+
+        calib_info = QLabel("Click 'Calibrate' for each coordinate to set up the automation points")
+        calib_info.setStyleSheet("color: #888888; font-size: 12px; margin-bottom: 8px;")
+        calibration_layout.addWidget(calib_info)
 
         scroll_area = QScrollArea()
         scroll_area.setWidgetResizable(True)
-        scroll_area.setFixedHeight(350)
+        scroll_area.setVerticalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAsNeeded)
+        scroll_area.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
 
         scroll_widget = QWidget()
         scroll_layout = QVBoxLayout(scroll_widget)
-        scroll_layout.setSpacing(5)
+        scroll_layout.setSpacing(4)
+        scroll_layout.setContentsMargins(6, 6, 6, 6)
 
         for coord_name, description in self.coord_labels.items():
             self.create_calibration_row(scroll_layout, coord_name, description)
 
-        scroll_area.setWidget(scroll_widget)
-        main_layout.addWidget(scroll_area)
+        # Set minimum size to ensure all content is scrollable
+        # 10 items * ~60px per item + margins = ~620px minimum height
+        scroll_widget.setMinimumHeight(620)
 
-        info_layout = QVBoxLayout()
-        info_layout.setSpacing(5)
+        scroll_area.setWidget(scroll_widget)
+        calibration_layout.addWidget(scroll_area)
+        main_layout.addWidget(calibration_group)
+
+        # Settings Section
+        settings_group = QGroupBox("Settings")
+        settings_layout = QVBoxLayout(settings_group)
+        settings_layout.setContentsMargins(16, 20, 16, 16)
+        settings_layout.setSpacing(12)
 
         auto_save_label = QLabel("Settings are automatically saved to fishscopeconfig.json")
-        auto_save_label.setStyleSheet("color: #888888; font-size: 10px; text-align: center;")
+        auto_save_label.setStyleSheet("color: #888888; font-size: 12px;")
         auto_save_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        info_layout.addWidget(auto_save_label)
+        settings_layout.addWidget(auto_save_label)
 
-        reset_layout = QHBoxLayout()
-        reset_layout.addStretch()
+        # Settings buttons layout
+        settings_buttons_layout = QHBoxLayout()
+        settings_buttons_layout.setSpacing(12)
+        settings_buttons_layout.addStretch()
+
+        # Check for updates button
+        update_btn = QPushButton("Check for Updates")
+        update_btn.clicked.connect(self.check_for_updates)
+        update_btn.setStyleSheet("""
+            QPushButton {
+                background-color: #17a2b8;
+                color: white;
+                font-weight: 600;
+                padding: 8px 16px;
+                font-size: 12px;
+                border: none;
+                border-radius: 6px;
+            }
+            QPushButton:hover {
+                background-color: #138496;
+            }
+            QPushButton:pressed {
+                background-color: #0f6674;
+            }
+        """)
+        settings_buttons_layout.addWidget(update_btn)
 
         reset_btn = QPushButton("Reset to Defaults")
         reset_btn.clicked.connect(self.reset_to_defaults)
         reset_btn.setStyleSheet("""
             QPushButton {
-                background-color: #cc6600;
+                background-color: #fd7e14;
                 color: white;
-                font-weight: bold;
+                font-weight: 600;
                 padding: 8px 16px;
-                font-size: 10px;
+                font-size: 12px;
+                border: none;
+                border-radius: 6px;
             }
             QPushButton:hover {
-                background-color: #ee8800;
+                background-color: #e8650e;
+            }
+            QPushButton:pressed {
+                background-color: #d15a0a;
             }
         """)
-        reset_layout.addWidget(reset_btn)
-        reset_layout.addStretch()
+        settings_buttons_layout.addWidget(reset_btn)
+        settings_buttons_layout.addStretch()
 
-        info_layout.addLayout(reset_layout)
-        main_layout.addLayout(info_layout)
+        settings_layout.addLayout(settings_buttons_layout)
+        main_layout.addWidget(settings_group)
 
-        credits_layout = QHBoxLayout()
-        credits_layout.setContentsMargins(0, 20, 0, 0)
+        # Footer Section
+        footer_layout = QHBoxLayout()
+        footer_layout.setContentsMargins(0, 16, 0, 0)
+        footer_layout.setSpacing(16)
 
         creator_label = QLabel("Created by: cresqnt")
-        creator_label.setStyleSheet("color: #888888; font-size: 10px;")
-        credits_layout.addWidget(creator_label)
+        creator_label.setStyleSheet("color: #888888; font-size: 11px;")
+        footer_layout.addWidget(creator_label)
 
-        discord_label = QLabel('<a href="https://discord.gg/6cuCu6ymkX" style="color: #7289da; text-decoration: none;">Discord for help: .gg/6cuCu6ymkX</a>')
-        discord_label.setStyleSheet("color: #7289da; font-size: 10px;")
+        discord_label = QLabel('<a href="https://discord.gg/6cuCu6ymkX" style="color: #4a9eff; text-decoration: none;">Discord for help: .gg/6cuCu6ymkX</a>')
+        discord_label.setStyleSheet("color: #4a9eff; font-size: 9px;")
         discord_label.setOpenExternalLinks(True)
-        credits_layout.addWidget(discord_label)
+        footer_layout.addWidget(discord_label)
 
-        credits_layout.addStretch()
+        footer_layout.addStretch()
 
         idea_label = QLabel("Auto Sell Idea: x2_c")
-        idea_label.setStyleSheet("color: #888888; font-size: 10px;")
-        credits_layout.addWidget(idea_label)
+        idea_label.setStyleSheet("color: #888888; font-size: 11px;")
+        footer_layout.addWidget(idea_label)
 
-        main_layout.addLayout(credits_layout)
+        main_layout.addLayout(footer_layout)
 
     def create_calibration_row(self, parent_layout, coord_name, description):
         frame = QFrame()
         frame.setStyleSheet("""
             QFrame {
-                background-color: #2d2d2d;
-                border: 1px solid #444444;
-                border-radius: 4px;
+                background-color: #3a3a3a;
+                border: 1px solid #555555;
+                border-radius: 6px;
                 margin: 2px;
             }
         """)
 
-        frame_layout = QVBoxLayout(frame)
+        frame_layout = QHBoxLayout(frame)
         frame_layout.setContentsMargins(10, 8, 10, 8)
-        frame_layout.setSpacing(5)
+        frame_layout.setSpacing(12)
+
+        # Left side - Description and coordinates
+        info_layout = QVBoxLayout()
+        info_layout.setSpacing(4)
 
         # Description
         desc_label = QLabel(description)
-        desc_label.setFont(QFont("Arial", 9))
+        desc_label.setFont(QFont("Segoe UI", 11, QFont.Weight.Medium))
         desc_label.setWordWrap(True)
-        desc_label.setStyleSheet("color: #ffffff; background-color: transparent;")
-        frame_layout.addWidget(desc_label)
+        desc_label.setStyleSheet("color: #e0e0e0; background-color: transparent;")
+        info_layout.addWidget(desc_label)
 
         # Current coordinates
         coord_text = self.get_coord_text(coord_name)
         coord_label = QLabel(coord_text)
-        coord_label.setFont(QFont("Arial", 8))
-        coord_label.setStyleSheet("color: #cccccc; background-color: transparent;")
-        frame_layout.addWidget(coord_label)
+        coord_label.setFont(QFont("Segoe UI", 9))
+        coord_label.setStyleSheet("color: #aaaaaa; background-color: transparent;")
+        info_layout.addWidget(coord_label)
 
-        # Calibrate button
-        calib_btn = QPushButton("📍 Calibrate")
+        frame_layout.addLayout(info_layout)
+        frame_layout.addStretch()
+
+        # Right side - Calibrate button
+        calib_btn = QPushButton("Calibrate")
         calib_btn.clicked.connect(lambda: self.start_calibration(coord_name))
-        calib_btn.setFixedWidth(120)
+        calib_btn.setFixedWidth(100)
         calib_btn.setStyleSheet("""
             QPushButton {
-                background-color: #0066cc;
+                background-color: #4a9eff;
                 color: white;
-                border: 1px solid #0088ff;
-                padding: 8px 12px;
-                border-radius: 4px;
-                font-weight: bold;
-                font-size: 10px;
+                border: none;
+                padding: 8px 16px;
+                border-radius: 6px;
+                font-weight: 600;
+                font-size: 12px;
             }
             QPushButton:hover {
-                background-color: #0088ff;
-                border: 1px solid #00aaff;
+                background-color: #357abd;
             }
             QPushButton:pressed {
-                background-color: #004499;
+                background-color: #2c5aa0;
             }
         """)
         frame_layout.addWidget(calib_btn)
@@ -691,6 +858,7 @@ class CalibrationUI(QMainWindow):
 
         # Show the overlay
         self.overlay.show()
+
 
     def on_calibration_click(self, x, y):
         if self.current_calibration == 'reel_bar':
@@ -814,8 +982,12 @@ class CalibrationUI(QMainWindow):
                 'first_item': (825, 408),
                 'sell_button': (595, 806),
                 'confirm_button': (805, 618),
-                'mouse_idle_position': (self.automation.screen_width // 2, self.automation.screen_height // 2)
+                'mouse_idle_position': (self.automation.screen_width // 2, self.automation.screen_height // 2),
+                'shaded_area': (900, 800)
             }
+
+            # Reset to default shaded color
+            self.automation.shaded_color = (109, 198, 164)
 
             # Auto-save the reset coordinates
             self.automation.save_calibration()
@@ -845,6 +1017,10 @@ class CalibrationUI(QMainWindow):
             """)
             success_msg.exec()
 
+    def check_for_updates(self):
+        """Manually check for updates"""
+        self.auto_updater.check_for_updates(silent=False)
+
     def closeEvent(self, event):
         self.automation.stop_automation()
         event.accept()
@@ -856,6 +1032,10 @@ def main():
     app.setApplicationName("FishScope")
     app.setApplicationVersion("1.0")
     app.setOrganizationName("cresqnt")
+
+    # Set application icon
+    if os.path.exists("icon.ico"):
+        app.setWindowIcon(QIcon("icon.ico"))
 
     automation = MouseAutomation()
     ui = CalibrationUI(automation)
@@ -869,6 +1049,10 @@ def main():
     print("F2: Stop automation")
 
     ui.show()
+
+    # Check for updates on startup (silent mode - only show if update available)
+    QTimer.singleShot(2000, lambda: ui.auto_updater.check_for_updates(silent=True))
+
     sys.exit(app.exec())
 
 if __name__ == "__main__":
