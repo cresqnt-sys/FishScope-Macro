@@ -24,68 +24,55 @@ class MouseAutomation:
         self.thread = None
         self.config_file = "fishscopeconfig.json"
 
-        # Initialize DPI awareness and scaling
         self.setup_dpi_awareness()
         self.dpi_scale_factor = self.get_dpi_scale_factor()
-        self.manual_scale_override = None  # User can override auto-detection
-        self.auto_scale_enabled = True  # Enable automatic scaling by default
+        self.manual_scale_override = None
+        self.auto_scale_enabled = True
 
         self.screen_width, self.screen_height = pyautogui.size()
-
-        # Base coordinates designed for 100% scaling (1920x1080 reference)
         self.base_coordinates = {
             'fish_button': (850, 830),
             'white_diamond': (1176, 836),
             'reel_bar': (757, 762, 1161, 782),
             'completed_border': (1139, 762),
             'close_button': (1113, 342),
-            'first_item': (827, 401),  # Updated to match AutoHotkey
-            'sell_button': (589, 801),  # Updated to match AutoHotkey
-            'confirm_button': (802, 620),  # Updated to match AutoHotkey
+            'first_item': (827, 401),
+            'sell_button': (589, 801),
+            'confirm_button': (802, 620),
             'mouse_idle_position': (self.screen_width // 2, self.screen_height // 2),
-            'shaded_area': (955, 767)  # Default bar color sampling location
+            'shaded_area': (955, 767)
         }
 
-        # Working coordinates (will be scaled versions of base coordinates)
         self.coordinates = {}
-
-        # Default shaded color (teal/green) - will be overridden by dynamic detection
         self.shaded_color = (109, 198, 164)
 
         self.load_calibration()
         self.update_scaled_coordinates()
 
     def setup_dpi_awareness(self):
-        """Make the application DPI-aware to get accurate screen coordinates."""
         try:
-            # Try to set DPI awareness for Windows 10 version 1703 and later
-            ctypes.windll.shcore.SetProcessDpiAwareness(2)  # PROCESS_PER_MONITOR_DPI_AWARE_V2
+            ctypes.windll.shcore.SetProcessDpiAwareness(2)
 
         except:
             try:
-                # Fallback for older Windows versions
                 ctypes.windll.user32.SetProcessDPIAware()
 
             except:
                 pass
 
     def get_dpi_scale_factor(self):
-        """Detect the current Windows DPI scaling factor."""
         try:
-            # Get the DPI of the primary monitor
             hdc = ctypes.windll.user32.GetDC(0)
-            dpi_x = ctypes.windll.gdi32.GetDeviceCaps(hdc, 88)  # LOGPIXELSX
+            dpi_x = ctypes.windll.gdi32.GetDeviceCaps(hdc, 88)
             ctypes.windll.user32.ReleaseDC(0, hdc)
 
-            # Standard DPI is 96, so calculate scale factor
             scale_factor = dpi_x / 96.0
 
             return scale_factor
         except Exception:
-            return 1.0  # Default to 100% scaling
+            return 1.0
 
     def get_effective_scale_factor(self):
-        """Get the scale factor to use (manual override or auto-detected)."""
         if self.manual_scale_override is not None:
             return self.manual_scale_override / 100.0
         elif self.auto_scale_enabled:
@@ -94,16 +81,10 @@ class MouseAutomation:
             return 1.0
 
     def update_scaled_coordinates(self):
-        """Update working coordinates based on current scale factor.
-
-        This method ONLY updates the runtime coordinates used for automation.
-        It does NOT modify or save the base coordinates to the config file.
-        """
         scale_factor = self.get_effective_scale_factor()
 
         for key, coord in self.base_coordinates.items():
             if key == 'reel_bar':
-                # Scale all four coordinates for reel bar using round() for better precision
                 x1, y1, x2, y2 = coord
                 self.coordinates[key] = (
                     round(x1 * scale_factor),
@@ -112,7 +93,6 @@ class MouseAutomation:
                     round(y2 * scale_factor)
                 )
             else:
-                # Scale x, y coordinates using round() for better precision
                 x, y = coord
                 self.coordinates[key] = (
                     round(x * scale_factor),
@@ -122,29 +102,14 @@ class MouseAutomation:
 
 
     def set_manual_scale_override(self, percentage):
-        """Set manual scale override (percentage, e.g., 125 for 125%).
-
-        This only affects runtime scaling, does not auto-save to config.
-        Call save_calibration() manually if you want to persist the setting.
-        """
         if percentage is None:
             self.manual_scale_override = None
-            pass  # Manual scale override disabled - using auto-detection
         else:
             self.manual_scale_override = percentage
         self.update_scaled_coordinates()
 
     def set_auto_scale_enabled(self, enabled):
-        """Enable or disable automatic scaling.
-
-        This only affects runtime scaling, does not auto-save to config.
-        Call save_calibration() manually if you want to persist the setting.
-        """
         self.auto_scale_enabled = enabled
-        if enabled:
-            pass  # Automatic scaling enabled
-        else:
-            pass  # Automatic scaling disabled
         self.update_scaled_coordinates()
 
     def save_calibration(self):
@@ -154,16 +119,12 @@ class MouseAutomation:
                 'shaded_color': self.shaded_color,
                 'manual_scale_override': self.manual_scale_override,
                 'auto_scale_enabled': self.auto_scale_enabled,
-                'config_version': '2.0'  # Version for future compatibility
+                'config_version': '2.0'
             }
-            # Note: We don't save 'coordinates' or 'dpi_scale_factor' because:
-            # - coordinates are dynamically calculated from base_coordinates + current DPI
-            # - dpi_scale_factor is detected fresh each time the app starts
             with open(self.config_file, 'w') as f:
                 json.dump(config_data, f, indent=2)
-            pass  # Calibration auto-saved successfully
         except Exception:
-            pass  # Error saving calibration
+            pass
 
     def load_calibration(self):
         try:
@@ -171,9 +132,7 @@ class MouseAutomation:
                 with open(self.config_file, 'r') as f:
                     saved_data = json.load(f)
 
-                # Check if this is the new format with scaling support
                 if isinstance(saved_data, dict) and 'config_version' in saved_data:
-                    # New format with scaling support - load base coordinates only
                     if 'base_coordinates' in saved_data:
                         self.base_coordinates.update(saved_data['base_coordinates'])
                     if 'shaded_color' in saved_data:
@@ -185,25 +144,13 @@ class MouseAutomation:
 
 
                 elif isinstance(saved_data, dict) and 'coordinates' in saved_data:
-                    # Old format - ONE-TIME migration to new format
-                    # Detected old calibration format. Performing one-time migration...
-                    # Note: Your coordinates will be preserved but converted to scaling-aware format.
-
                     old_coords = saved_data['coordinates']
-
-                    # Ask user what DPI the old coordinates were calibrated for
-                    # Current DPI scaling detected: {self.dpi_scale_factor:.0%}
-                    # If your old coordinates were calibrated at a different DPI scaling,
-                    # you may need to recalibrate after migration.
-
-                    # For safety, assume old coordinates were calibrated at 100% DPI
-                    # This preserves the exact pixel values the user originally set
                     for key, coord in old_coords.items():
                         if key in self.base_coordinates:
                             if key == 'reel_bar' and len(coord) == 4:
-                                self.base_coordinates[key] = coord  # Keep exact values
+                                self.base_coordinates[key] = coord
                             elif len(coord) == 2:
-                                self.base_coordinates[key] = coord  # Keep exact values
+                                self.base_coordinates[key] = coord
 
                     if 'shaded_color' in saved_data:
                         self.shaded_color = tuple(saved_data['shaded_color'])
@@ -211,19 +158,15 @@ class MouseAutomation:
 
 
                 else:
-                    # Very old format - preserve exact coordinates
-
                     for key, coord in saved_data.items():
                         if key in self.base_coordinates:
                             if key == 'reel_bar' and len(coord) == 4:
-                                self.base_coordinates[key] = coord  # Keep exact values
+                                self.base_coordinates[key] = coord
                             elif len(coord) == 2:
-                                self.base_coordinates[key] = coord  # Keep exact values
+                                self.base_coordinates[key] = coord
 
-            else:
-                pass  # No saved calibration found, using defaults
         except Exception:
-            pass  # Error loading calibration
+            pass
 
 
 
@@ -283,11 +226,11 @@ class MouseAutomation:
         return None
 
     def find_pixel_color_enhanced(self, x1, y1, x2, y2, target_color, tolerance=5):
-        """Enhanced color detection using pixel search exactly like AutoHotkey PixelSearch"""
+        """Enhanced color detection using pixel search"""
         screenshot = ImageGrab.grab(bbox=(x1, y1, x2, y2))
         width, height = screenshot.size
 
-        # Search every pixel exactly like AutoHotkey PixelSearch with Fast RGB
+        # Search every pixel for color matching
         for y in range(height):
             for x in range(width):
                 pixel = screenshot.getpixel((x, y))
@@ -356,7 +299,7 @@ class MouseAutomation:
             # Initialize bar color variable
             bar_color = None
 
-            # Wait for white pixel (following AutoHotkey pattern)
+            # Wait for white pixel
             while True:
                 if not self.toggle:
                     return
@@ -364,10 +307,10 @@ class MouseAutomation:
                 check_x, check_y = self.coordinates['white_diamond']
                 color = self.get_pixel_color(check_x, check_y)
 
-                if color == (255, 255, 255):  # Exact white check like AutoHotkey
+                if color == (255, 255, 255):  # Exact white check
                     # Move mouse to idle position (using calibrated coordinate)
                     autoit.mouse_move(idle_x, idle_y, 3)
-                    time.sleep(0.05)  # 50ms like AutoHotkey
+                    time.sleep(0.05)  # 50ms delay
 
                     # Sample bar color from calibrated shaded area
                     shaded_x, shaded_y = self.coordinates['shaded_area']
@@ -375,30 +318,30 @@ class MouseAutomation:
 
                     break
 
-                time.sleep(0.1)  # 100ms like AutoHotkey
+                time.sleep(0.1)  # 100ms delay
 
-            # Bar clicking loop with 9-second timeout (exactly like AutoHotkey)
+            # Bar clicking loop with 9-second timeout
             start_time = time.time()
             while True:
                 if not self.toggle:
                     break
-                if (time.time() - start_time) > 9:  # 9000ms like AutoHotkey
+                if (time.time() - start_time) > 9:  # 9000ms timeout
                     break
 
-                # PixelSearch equivalent - search for bar color in reel area (exactly like AHK)
+                # PixelSearch equivalent - search for bar color in reel area
                 search_area = self.coordinates['reel_bar']
                 found_pos = self.find_pixel_color_enhanced(*search_area, bar_color, tolerance=5)
 
                 if found_pos is not None:
-                    # ErrorLevel = 0 (found) - don't click (like AutoHotkey)
+                    # Color found - don't click
                     pass
                 else:
-                    # ErrorLevel != 0 (not found) - click (like AutoHotkey)
+                    # Color not found - click
                     autoit.mouse_click("left")
 
-                # NO delay between checks (like AutoHotkey - continuous loop)
+                # No delay between checks - continuous loop
 
-            time.sleep(0.3)  # 300ms like AutoHotkey
+            time.sleep(0.3)  # 300ms delay
 
             # Close the catch screen (faster)
             close_x, close_y = self.coordinates['close_button']
@@ -1442,9 +1385,9 @@ class CalibrationUI(QMainWindow):
                 'reel_bar': (757, 762, 1161, 782),
                 'completed_border': (1139, 762),
                 'close_button': (1113, 342),
-                'first_item': (827, 401),  # Updated to match AutoHotkey
-                'sell_button': (589, 801),  # Updated to match AutoHotkey
-                'confirm_button': (802, 620),  # Updated to match AutoHotkey
+                'first_item': (827, 401),
+                'sell_button': (589, 801),
+                'confirm_button': (802, 620),
                 'mouse_idle_position': (self.automation.screen_width // 2, self.automation.screen_height // 2),
                 'shaded_area': (955, 767)  # Default bar color sampling location
             }
