@@ -1,0 +1,5 @@
+PyQt6>=6.4.0
+pyautogui>=0.9.54
+Pillow>=9.0.0
+keyboard>=0.13.5
+autoit-py>=0.1.0
