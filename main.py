@@ -18,11 +18,59 @@ import requests
 import pytesseract
 import re
 from datetime import datetime, timezone
+from itertools import product
 
 pyautogui.FAILSAFE = False
 
 pytesseract.pytesseract.tesseract_cmd = r"C:\Program Files\Tesseract-OCR\tesseract.exe"
 
+def generate_ao_variants(name):
+    ambiguous_positions = [i for i, c in enumerate(name.lower()) if c in ('a', 'o')]
+    variants = []
+    options = [('a', 'o')] * len(ambiguous_positions)
+    for combo in product(*options):
+        name_list = list(name.lower())
+        for pos, char in zip(ambiguous_positions, combo):
+            name_list[pos] = char
+        variant = ''.join(name_list)
+        variants.append(variant.title())
+    return variants
+
+def correct_name(raw_name, known_names, max_distance=2):
+    raw_name = raw_name.title()
+
+    for variant in generate_ao_variants(raw_name):
+        if variant in known_names:
+            return variant
+
+    best_match = None
+    best_distance = max_distance + 1
+    for name in known_names:
+        dist = levenshtein(raw_name.lower(), name.lower())
+        if dist < best_distance:
+            best_distance = dist
+            best_match = name
+
+    return best_match if best_distance <= max_distance else raw_name
+
+def levenshtein(s1, s2):
+    if len(s1) < len(s2):
+        return levenshtein(s2, s1)
+
+    if len(s2) == 0:
+        return len(s1)
+
+    previous_row = list(range(len(s2) + 1))
+    for i, c1 in enumerate(s1):
+        current_row = [i + 1]
+        for j, c2 in enumerate(s2):
+            insertions = previous_row[j + 1] + 1 
+            deletions = current_row[j] + 1      
+            substitutions = previous_row[j] + (c1 != c2)
+            current_row.append(min(insertions, deletions, substitutions))
+        previous_row = current_row
+    
+    return previous_row[-1]
 
 class MouseAutomation:
     def __init__(self):
@@ -54,6 +102,7 @@ class MouseAutomation:
         self.ignore_common_fish = False
         self.ignore_uncommon_fish = False
         self.ignore_rare_fish = False
+        self.ignore_trash = False
         self.fish_data = {}
 
         self.coordinates = {}
@@ -67,29 +116,71 @@ class MouseAutomation:
         desc_x1, desc_y1, desc_x2, desc_y2 = self.coordinates['fish_caught_desc']
         screenshot = ImageGrab.grab(bbox=(desc_x1, desc_y1, desc_x2, desc_y2))
         fish_description = self.ocr_extract_text(screenshot)
-        print(f"Detected fish description: {fish_description}")
-        
-        mutations = ["Ruffed", "Crusted", "Slick", "Rough", "Charred", "Shimmering", "Tainted", "Hollow", "Lucid"]
-        
-        fish_name_match = re.search(r"You've got (.+?)(?:!|\.\.\.)", fish_description)
-        
+        print(f"Raw OCR text: {fish_description}")
+
+        fish_description = self.clean_ocr_text(fish_description)
+        print(f"Cleaned OCR text: {fish_description}")
+
+        mutations = ["Ruffled", "Crusted", "Slick", "Rough", "Charred", "Shimmering", "Tainted", "Hollow", "Lucid"]
+        fish_gone = ["thefishisgone.", "thefishisgone...", "the fish is gone.", "thefishisgone.,", "the fish is gone..."]
+
+        fish_name_match = re.search(r"you've got (.+?)(?:!|\.\.\.)", fish_description)
+
         if fish_name_match:
-            full_fish_name = fish_name_match.group(1).strip(" .!").strip()
-            
+            full_fish_name = fish_name_match.group(1).strip(" .!").strip().title()
+
+            full_fish_name = correct_name(full_fish_name, self.fish_data.keys())
+
             mutation = None
-            for mut in mutations:
-                if mut in full_fish_name:
-                    mutation = mut
-                    fish_name = full_fish_name.replace(mut, "").strip()
+            fish_name = full_fish_name
+
+            for mut_candidate in mutations:
+                variants = generate_ao_variants(mut_candidate)
+                for variant in variants:
+                    if variant.lower() in full_fish_name.lower():
+                        mutation = mut_candidate.title()
+                        fish_name = full_fish_name.lower().replace(variant.lower(), '').strip().title()
+                        break
+                if mutation:
                     break
+
+            if not mutation:
+                for mut_candidate in mutations:
+                    dist = levenshtein(mut_candidate.lower(), full_fish_name.lower().split()[0])
+                    if dist <= 2:
+                        mutation = mut_candidate.title()
+                        fish_name = full_fish_name[len(mut_candidate):].strip().title()
+                        break
 
             if not mutation:
                 fish_name = full_fish_name
 
             return fish_name, mutation
         else:
+            for gone in fish_gone:
+                if gone in fish_description:
+                    print("Fishing Failed")
+                    return "Fishing Failed", None
             print("Regex failed. Raw OCR text:", fish_description)
             return "Unknown Fish", None
+
+    def clean_ocr_text(self, text):
+        text = text.lower()
+        replacements = {
+            '0': 'o',
+            '1': 'l',
+            '2': 'z',
+            '3': 'e',
+            '4': 'a',
+            '5': 's',
+            '6': 'g',
+            '7': 't',
+            '8': 'b',
+            '9': 'q',
+        }
+        for wrong, right in replacements.items():
+            text = text.replace(wrong, right)
+        return text
 
     def ocr_extract_text(self, screenshot):
         return pytesseract.image_to_string(screenshot)
@@ -98,26 +189,40 @@ class MouseAutomation:
         if not self.webhook_url:
             print("Webhook URL is not set.")
             return
+        
+        if fish_name == "Fishing Failed":
+            return
 
-        # Get rarity and color
         if fish_name in self.fish_data:
             rarity = self.fish_data[fish_name]['rarity']
             color = self.get_rarity_color(rarity)
         else:
-            rarity = "Unknown"
+            rarity = "Trash"
             color = 0x8B4513  # Default brown color
 
-        # Build fields
+        if rarity == "Common" and self.ignore_common_fish:
+            print("Common fish ignored, not sending webhook.")
+            return
+        if rarity == "Uncommon" and self.ignore_uncommon_fish:
+            print("Uncommon fish ignored, not sending webhook.")
+            return
+        if rarity == "Rare" and self.ignore_rare_fish:
+            print("Rare fish ignored, not sending webhook.")
+            return
+        if rarity == "Trash" and self.ignore_trash:
+            print("Trash ignored, not sending webhook.")
+            return
+
+        title = "Fish Caught!" if rarity != "Unknown" else "You snagged some trash!"
+        name = "Fish" if rarity != "Unknown" else "Item"
+
         fields = [
-            {"name": "Fish", "value": fish_name, "inline": True},
+            {"name": name, "value": fish_name, "inline": True},
             {"name": "Rarity", "value": rarity, "inline": True}
         ]
 
         if mutation:
             fields.append({"name": "Mutation", "value": mutation, "inline": True})
-
-        # Embed title
-        title = "Fish Caught!" if rarity != "Unknown" else "You snagged some trash!"
 
         embed = {
             "title": title,
@@ -264,6 +369,7 @@ class MouseAutomation:
                 'ignore_common': self.ignore_common_fish,
                 'ignore_uncommon': self.ignore_uncommon_fish,
                 'ignore_rare': self.ignore_rare_fish,
+                'ignore_trash': self.ignore_trash,
             }
             with open(self.config_file, 'w') as f:
                 json.dump(config_data, f, indent=2)
@@ -293,6 +399,8 @@ class MouseAutomation:
                         self.ignore_uncommon_fish = bool(saved_data['ignore_uncommon'])
                     if 'ignore_rare' in saved_data:
                         self.ignore_rare_fish = bool(saved_data['ignore_rare'])
+                    if 'ignore_trash' in saved_data:
+                        self.ignore_trash = bool(saved_data['ignore_trash'])
 
 
                 elif isinstance(saved_data, dict) and 'coordinates' in saved_data:
@@ -467,7 +575,8 @@ class MouseAutomation:
                 check_x, check_y = self.coordinates['white_diamond']
                 color = self.get_pixel_color(check_x, check_y)
 
-                if color == (255, 255, 255):  # Exact white check
+                # Use tolerance-based white detection instead of exact match
+                if self.is_white_pixel(color, tolerance=15):  # More flexible white detection
                     # Move mouse to idle position (using calibrated coordinate)
                     autoit.mouse_move(idle_x, idle_y, 3)
                     time.sleep(0.05)  # 50ms delay
@@ -496,7 +605,7 @@ class MouseAutomation:
                     # Color found - don't click
                     pass
                 else:
-                    # Color not found - click
+                    # Color not found - click twice
                     autoit.mouse_click("left")
                     autoit.mouse_click("left")
 
@@ -790,6 +899,10 @@ class CalibrationUI(QMainWindow):
 
     def update_ignore_rare(self, state):
         self.automation.ignore_rare_fish = state == Qt.CheckState.Checked.value
+        self.automation.save_calibration()
+
+    def update_ignore_trash(self, state):
+        self.automation.ignore_trash = state == Qt.CheckState.Checked.value
         self.automation.save_calibration()
 
     def apply_clean_theme(self):
@@ -1357,6 +1470,28 @@ class CalibrationUI(QMainWindow):
             }
         """)
         webhook_layout.addWidget(self.ignore_rare_checkbox)
+
+        self.ignore_trash_checkbox = QCheckBox("Ignore Trash")
+        self.ignore_trash_checkbox.setChecked(self.automation.ignore_trash)
+        self.ignore_trash_checkbox.stateChanged.connect(self.update_ignore_trash)
+        self.ignore_trash_checkbox.setStyleSheet("""
+            QCheckBox {
+                color: #e0e0e0;
+                font-size: 11px;
+            }
+            QCheckBox::indicator {
+                width: 16px;
+                height: 16px;
+                border: 2px solid #555555;
+                border-radius: 3px;
+                background-color: #2d2d2d;
+            }
+            QCheckBox::indicator:checked {
+                background-color: #4a9eff;
+                border-color: #4a9eff;
+            }
+        """)
+        webhook_layout.addWidget(self.ignore_trash_checkbox)
 
         scroll_layout.addWidget(webhook_group)
 
