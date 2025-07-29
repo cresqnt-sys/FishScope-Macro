@@ -10,10 +10,13 @@ import os
 import sys
 from PyQt6.QtWidgets import (QApplication, QMainWindow, QVBoxLayout, QHBoxLayout,
                             QWidget, QPushButton, QLabel, QFrame, QScrollArea,
-                            QMessageBox, QGroupBox, QSpinBox, QCheckBox, QComboBox)
+                            QMessageBox, QGroupBox, QSpinBox, QCheckBox, QComboBox, QLineEdit)
 from PyQt6.QtCore import Qt, QTimer, pyqtSignal, QObject, QPoint
 from PyQt6.QtGui import QFont, QCursor, QPainter, QPen, QColor, QIcon
 from updater import AutoUpdater
+import requests
+import pytesseract
+import re
 
 pyautogui.FAILSAFE = False
 
@@ -35,6 +38,7 @@ class MouseAutomation:
             'white_diamond': (1176, 836),
             'reel_bar': (757, 762, 1161, 782),
             'completed_border': (1139, 762),
+            'fish_caught_desc': (700, 540, 1035, 685),
             'close_button': (1113, 342),
             'first_item': (827, 401),
             'sell_button': (589, 801),
@@ -42,12 +46,133 @@ class MouseAutomation:
             'mouse_idle_position': (self.screen_width // 2, self.screen_height // 2),
             'shaded_area': (955, 767)
         }
+        self.webhook_url = ""
+        self.ignore_common_fish = False
+        self.ignore_uncommon_fish = False
+        self.ignore_rare_fish = False
+        self.fish_data = {}
 
         self.coordinates = {}
         self.shaded_color = (109, 198, 164)
 
         self.load_calibration()
+        self.load_fish_data()
         self.update_scaled_coordinates()
+
+    def extract_fish_name(self):
+        desc_x1, desc_y1, desc_x2, desc_y2 = self.coordinates['fish_caught_desc']
+        screenshot = ImageGrab.grab(bbox=(desc_x1, desc_y1, desc_x2, desc_y2))
+        fish_description = self.ocr_extract_text(screenshot)
+        print(f"Detected fish description: {fish_description}")
+        
+        mutations = ["Ruffed", "Crusted", "Slick", "Rough", "Charred", "Shimmering", "Tainted", "Hollow", "Lucid"]
+        
+        fish_name_match = re.search(r"You caught a (.*?)!", fish_description)
+        
+        if fish_name_match:
+            full_fish_name = fish_name_match.group(1).strip()
+            
+            mutation = None
+            for mut in mutations:
+                if mut in full_fish_name:
+                    mutation = mut
+                    fish_name = full_fish_name.replace(mut, "").strip()
+                    break
+            
+            if not mutation:
+                fish_name = full_fish_name
+            
+            return fish_name, mutation
+        else:
+            return "Unknown Fish", None
+
+    def ocr_extract_text(self, screenshot):
+        return pytesseract.image_to_string(screenshot)
+
+    def send_webhook_message(self, fish_name, mutation):
+        if not self.webhook_url:
+            return
+
+        if fish_name in self.fish_data:
+            rarity = self.fish_data[fish_name]['rarity']
+            color = self.get_rarity_color(rarity)
+        else:
+            rarity = "Unknown"
+            color = 0x69371c
+
+        if rarity == "Unknown":
+            title = f"You snagged some trash!"
+            description = f"You caught: {fish_name}"
+        else:
+            title = f"Fish Caught!"
+            description = f"You caught a {fish_name}!"
+
+        if mutation:
+            description += f"\nMutation: {mutation}"
+
+        embed = {
+            "title": title,
+            "description": description,
+            "color": color,
+            "timestamp": int(time.time()),
+            "image": {
+                "url": "https://raw.githubusercontent.com/vexthecoder/FishScope-fork/main/fishscope-nobg.png"
+            },
+            "footer": {
+                "text": "FishScope Macro"
+            }
+        }
+
+        if rarity != "Unknown":
+            embed["fields"] = [
+                {"name": "Rarity", "value": rarity, "inline": True}
+            ]
+
+        data = {
+            "embeds": [embed]
+        }
+
+        try:
+            response = requests.post(self.webhook_url, json=data)
+            response.raise_for_status()
+        except requests.exceptions.RequestException as e:
+            print(f"Failed to send webhook: {e}")
+
+    def send_webhook_message2(self, title, description, color=0x00ff00):
+        if not self.webhook_url:
+            return
+
+        embed = {
+            "title": title,
+            "description": description,
+            "color": color,
+            "timestamp": int(time.time()),
+            "image": {
+                "url": "https://raw.githubusercontent.com/vexthecoder/FishScope-fork/main/fishscope-nobg.png"
+            },
+            "footer": {
+                "text": "FishScope Macro"
+            }
+        }
+
+        data = {
+            "embeds": [embed]
+        }
+
+        try:
+            response = requests.post(self.webhook_url, json=data)
+            response.raise_for_status()
+        except requests.exceptions.RequestException as e:
+            print(f"Failed to send webhook: {e}")
+
+    def get_rarity_color(self, rarity):
+        rarity_colors = {
+            "Common": 0xbfbfbf,    # Light Gray
+            "Uncommon": 0x4dbd5e,  # Light Green
+            "Rare": 0x1f7dc4,      # Light Blue
+        }
+        return rarity_colors.get(rarity, 0x8B4513)
+
 
     def setup_dpi_awareness(self):
         try:
@@ -84,7 +209,7 @@ class MouseAutomation:
         scale_factor = self.get_effective_scale_factor()
 
         for key, coord in self.base_coordinates.items():
-            if key == 'reel_bar':
+            if key == 'reel_bar' or key == 'fish_caught_desc':
                 x1, y1, x2, y2 = coord
                 self.coordinates[key] = (
                     round(x1 * scale_factor),
@@ -119,7 +244,11 @@ class MouseAutomation:
                 'shaded_color': self.shaded_color,
                 'manual_scale_override': self.manual_scale_override,
                 'auto_scale_enabled': self.auto_scale_enabled,
-                'config_version': '2.0'
+                'config_version': '2.0',
+                'webhook_url': self.webhook_url,
+                'ignore_common': self.ignore_common_fish,
+                'ignore_uncommon': self.ignore_uncommon_fish,
+                'ignore_rare': self.ignore_rare_fish,
             }
             with open(self.config_file, 'w') as f:
                 json.dump(config_data, f, indent=2)
@@ -141,6 +270,14 @@ class MouseAutomation:
                         self.manual_scale_override = saved_data['manual_scale_override']
                     if 'auto_scale_enabled' in saved_data:
                         self.auto_scale_enabled = saved_data['auto_scale_enabled']
+                    if 'webhook_url' in saved_data:
+                        self.webhook_url = saved_data['webhook_url']
+                    if 'ignore_common' in saved_data:
+                        self.ignore_common_fish = bool(saved_data['ignore_common'])
+                    if 'ignore_uncommon' in saved_data:
+                        self.ignore_uncommon_fish = bool(saved_data['ignore_uncommon'])
+                    if 'ignore_rare' in saved_data:
+                        self.ignore_rare_fish = bool(saved_data['ignore_rare'])
 
 
                 elif isinstance(saved_data, dict) and 'coordinates' in saved_data:
@@ -167,6 +304,14 @@ class MouseAutomation:
 
         except Exception:
             pass
+
+    def load_fish_data(self):
+        try:
+            with open('fish-data.json', 'r') as f:
+                self.fish_data = json.load(f)
+        except FileNotFoundError:
+            print("Fish data file not found. Using empty dictionary.")
+            self.fish_data = {}
 
 
 
@@ -338,8 +483,12 @@ class MouseAutomation:
                 else:
                     # Color not found - click
                     autoit.mouse_click("left")
+                    autoit.mouse_click("left")
 
                 # No delay between checks - continuous loop
+            
+            fish_name, mutation = self.extract_fish_name()
+            self.send_webhook_message(fish_name, mutation)
 
             time.sleep(0.3)  # 300ms delay
 
@@ -359,12 +508,26 @@ class MouseAutomation:
             self.thread = threading.Thread(target=self.mouse_automation_loop)
             self.thread.daemon = True
             self.thread.start()
+            
+            # Send webhook message for start
+            self.send_webhook_message2(
+                "FishScope Macro Started",
+                "The fishing automation has been initiated.",
+                color=0x28a745  # Green color
+            )
 
     def stop_automation(self):
         self.toggle = False
         self.running = False
         if self.thread:
             self.thread.join(timeout=1)
+        
+        # Send webhook message for stop
+        self.send_webhook_message2(
+            "FishScope Macro Stopped",
+            "The fishing automation has been terminated.",
+            color=0xdc3545  # Red color
+        )
 
 class CalibrationOverlay(QWidget):
     coordinate_selected = pyqtSignal(int, int)
@@ -519,6 +682,7 @@ class CalibrationUI(QMainWindow):
         self.current_calibration = None
         self.reel_bar_step = 1
         self.reel_bar_coords = []
+        self.webhook_url = ""
 
         # Initialize auto updater
         self.auto_updater = AutoUpdater(self)
@@ -529,7 +693,8 @@ class CalibrationUI(QMainWindow):
             'shaded_area': 'Shaded Area - Pixel location to sample bar color from (should be on the reel bar)',
             'reel_bar': 'Reel Bar - The Reel progress bar',
             'completed_border': 'Completed Border - A pixel of the completed screen border',
-            'close_button': 'Close Button - Close the sucuessfully caught fish',
+            'close_button': 'Close Button - Close the successfully caught fish',
+            'fish_caught_desc': 'Fish Caught Description - Description area of the successfully caught fish',
             'first_item': 'First Item - Click the first item',
             'sell_button': 'Sell Button - Click to sell item',
             'confirm_button': 'Confirm Button - Confirm the sale',
@@ -546,6 +711,7 @@ class CalibrationUI(QMainWindow):
                 'reel_bar': (757, 762, 1161, 782),
                 'completed_border': (1139, 762),
                 'close_button': (1113, 342),
+                'fish_caught_desc': (700, 540, 1035, 685),
                 'first_item': (827, 401),
                 'sell_button': (589, 801),
                 'confirm_button': (802, 620),
@@ -592,6 +758,25 @@ class CalibrationUI(QMainWindow):
 
         self.setup_ui()
         self.apply_clean_theme()
+
+    def on_webhook_url_changed(self, text):
+        self.webhook_url = text
+        self.automation.webhook_url = text
+
+    def update_webhook_url(self, url):
+        self.automation.webhook_url = url
+
+    def update_ignore_common(self, state):
+        self.automation.ignore_common_fish = state == Qt.CheckState.Checked.value
+        self.automation.save_calibration()
+
+    def update_ignore_uncommon(self, state):
+        self.automation.ignore_uncommon_fish = state == Qt.CheckState.Checked.value
+        self.automation.save_calibration()
+
+    def update_ignore_rare(self, state):
+        self.automation.ignore_rare_fish = state == Qt.CheckState.Checked.value
+        self.automation.save_calibration()
 
     def apply_clean_theme(self):
         self.setStyleSheet("""
@@ -653,7 +838,7 @@ class CalibrationUI(QMainWindow):
 
     def setup_ui(self):
         self.setWindowTitle("FishScope Macro")
-        self.setFixedSize(600, 900)
+        self.setFixedSize(600, 600)
 
         # Set application icon
         if os.path.exists("icon.ico"):
@@ -665,6 +850,17 @@ class CalibrationUI(QMainWindow):
         main_layout = QVBoxLayout(central_widget)
         main_layout.setSpacing(10)
         main_layout.setContentsMargins(15, 15, 15, 15)
+
+        # Add a scroll area to the main layout
+        scroll_area = QScrollArea()
+        scroll_area.setWidgetResizable(True)
+        scroll_area.setVerticalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAsNeeded)
+        scroll_area.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+
+        scroll_widget = QWidget()
+        scroll_layout = QVBoxLayout(scroll_widget)
+        scroll_layout.setSpacing(10)
+        scroll_layout.setContentsMargins(0, 0, 0, 0)
 
         # Header Section - More compact
         header_layout = QVBoxLayout()
@@ -685,7 +881,7 @@ class CalibrationUI(QMainWindow):
         subtitle_label.setOpenExternalLinks(True)
         header_layout.addWidget(subtitle_label)
 
-        main_layout.addLayout(header_layout)
+        scroll_layout.addLayout(header_layout)
 
         # Control Section - More compact
         control_group = QGroupBox("Macro Controls")
@@ -755,7 +951,7 @@ class CalibrationUI(QMainWindow):
         button_layout.addWidget(self.stop_btn)
 
         control_layout.addLayout(button_layout)
-        main_layout.addWidget(control_group)
+        scroll_layout.addWidget(control_group)
 
         # Premade Calibrations Section - More compact
         premade_group = QGroupBox("Premade Calibrations")
@@ -833,7 +1029,7 @@ class CalibrationUI(QMainWindow):
         premade_selector_layout.addStretch()
 
         premade_layout.addLayout(premade_selector_layout)
-        main_layout.addWidget(premade_group)
+        scroll_layout.addWidget(premade_group)
 
         # Calibration Section - More compact
         calibration_group = QGroupBox("Coordinate Calibration")
@@ -845,26 +1041,25 @@ class CalibrationUI(QMainWindow):
         calib_info.setStyleSheet("color: #888888; font-size: 11px; margin-bottom: 6px;")
         calibration_layout.addWidget(calib_info)
 
-        scroll_area = QScrollArea()
-        scroll_area.setWidgetResizable(True)
-        scroll_area.setVerticalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAsNeeded)
-        scroll_area.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+        scroll_area_calibration = QScrollArea()
+        scroll_area_calibration.setWidgetResizable(True)
+        scroll_area_calibration.setVerticalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAsNeeded)
+        scroll_area_calibration.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
 
-        scroll_widget = QWidget()
-        scroll_layout = QVBoxLayout(scroll_widget)
-        scroll_layout.setSpacing(3)
-        scroll_layout.setContentsMargins(4, 4, 4, 4)
+        scroll_widget_calibration = QWidget()
+        scroll_layout_calibration = QVBoxLayout(scroll_widget_calibration)
+        scroll_layout_calibration.setSpacing(3)
+        scroll_layout_calibration.setContentsMargins(4, 4, 4, 4)
 
         for coord_name, description in self.coord_labels.items():
-            self.create_calibration_row(scroll_layout, coord_name, description)
+            self.create_calibration_row(scroll_layout_calibration, coord_name, description)
 
         # Set minimum size to ensure all content is scrollable
-        # 10 items * ~50px per item + margins = ~520px minimum height
-        scroll_widget.setMinimumHeight(520)
+        scroll_widget_calibration.setMinimumHeight(520)
 
-        scroll_area.setWidget(scroll_widget)
-        calibration_layout.addWidget(scroll_area)
-        main_layout.addWidget(calibration_group)
+        scroll_area_calibration.setWidget(scroll_widget_calibration)
+        calibration_layout.addWidget(scroll_area_calibration)
+        scroll_layout.addWidget(calibration_group)
 
         # Settings Section - More compact
         settings_group = QGroupBox("Settings")
@@ -1010,6 +1205,27 @@ class CalibrationUI(QMainWindow):
         """)
         settings_buttons_layout.addWidget(update_btn)
 
+        save_config_btn = QPushButton("Save Config")
+        save_config_btn.clicked.connect(self.automation.save_calibration)
+        save_config_btn.setStyleSheet("""
+            QPushButton {
+                background-color: #28a745;
+                color: white;
+                font-weight: 600;
+                padding: 8px 16px;
+                font-size: 12px;
+                border: none;
+                border-radius: 6px;
+            }
+            QPushButton:hover {
+                background-color: #218838;
+            }
+            QPushButton:pressed {
+                background-color: #1e7e34;
+            }
+        """)
+        settings_buttons_layout.addWidget(save_config_btn)
+
         reset_btn = QPushButton("Reset to Defaults")
         reset_btn.clicked.connect(self.reset_to_defaults)
         reset_btn.setStyleSheet("""
@@ -1033,7 +1249,102 @@ class CalibrationUI(QMainWindow):
         settings_buttons_layout.addStretch()
 
         settings_layout.addLayout(settings_buttons_layout)
-        main_layout.addWidget(settings_group)
+        scroll_layout.addWidget(settings_group)
+
+        # Webhook Settings Section
+        webhook_group = QGroupBox("Webhook Settings")
+        webhook_layout = QVBoxLayout(webhook_group)
+        webhook_layout.setContentsMargins(12, 15, 12, 12)
+        webhook_layout.setSpacing(8)
+
+        webhook_label = QLabel("Webhook URL:")
+        webhook_label.setStyleSheet("color: #e0e0e0; font-weight: 500;")
+        webhook_layout.addWidget(webhook_label)
+
+        self.webhook_input = QLineEdit()
+        self.webhook_input.setPlaceholderText("Enter your discord webhook URL here")
+        self.webhook_input.setText(self.automation.webhook_url)  # Load saved webhook URL
+        self.webhook_input.setStyleSheet("""
+            QLineEdit {
+                background-color: #2d2d2d;
+                color: #e0e0e0;
+                border: 1px solid #555555;
+                border-radius: 6px;
+                padding: 6px 10px;
+                font-size: 11px;
+            }
+        """)
+        self.webhook_input.textChanged.connect(self.on_webhook_url_changed)
+        webhook_layout.addWidget(self.webhook_input)
+
+        # Add checkboxes for ignoring fish rarities
+        self.ignore_common_checkbox = QCheckBox("Ignore Common Fish")
+        self.ignore_common_checkbox.setChecked(self.automation.ignore_common_fish)
+        self.ignore_common_checkbox.stateChanged.connect(self.update_ignore_common)
+        self.ignore_common_checkbox.setStyleSheet("""
+            QCheckBox {
+                color: #e0e0e0;
+                font-size: 11px;
+            }
+            QCheckBox::indicator {
+                width: 16px;
+                height: 16px;
+                border: 2px solid #555555;
+                border-radius: 3px;
+                background-color: #2d2d2d;
+            }
+            QCheckBox::indicator:checked {
+                background-color: #4a9eff;
+                border-color: #4a9eff;
+            }
+        """)
+        webhook_layout.addWidget(self.ignore_common_checkbox)
+
+        self.ignore_uncommon_checkbox = QCheckBox("Ignore Uncommon Fish")
+        self.ignore_uncommon_checkbox.setChecked(self.automation.ignore_uncommon_fish)
+        self.ignore_uncommon_checkbox.stateChanged.connect(self.update_ignore_uncommon)
+        self.ignore_uncommon_checkbox.setStyleSheet("""
+            QCheckBox {
+                color: #e0e0e0;
+                font-size: 11px;
+            }
+            QCheckBox::indicator {
+                width: 16px;
+                height: 16px;
+                border: 2px solid #555555;
+                border-radius: 3px;
+                background-color: #2d2d2d;
+            }
+            QCheckBox::indicator:checked {
+                background-color: #4a9eff;
+                border-color: #4a9eff;
+            }
+        """)
+        webhook_layout.addWidget(self.ignore_uncommon_checkbox)
+
+        self.ignore_rare_checkbox = QCheckBox("Ignore Rare Fish")
+        self.ignore_rare_checkbox.setChecked(self.automation.ignore_rare_fish)
+        self.ignore_rare_checkbox.stateChanged.connect(self.update_ignore_rare)
+        self.ignore_rare_checkbox.setStyleSheet("""
+            QCheckBox {
+                color: #e0e0e0;
+                font-size: 11px;
+            }
+            QCheckBox::indicator {
+                width: 16px;
+                height: 16px;
+                border: 2px solid #555555;
+                border-radius: 3px;
+                background-color: #2d2d2d;
+            }
+            QCheckBox::indicator:checked {
+                background-color: #4a9eff;
+                border-color: #4a9eff;
+            }
+        """)
+        webhook_layout.addWidget(self.ignore_rare_checkbox)
+
+        scroll_layout.addWidget(webhook_group)
 
         # Footer Section - More compact
         footer_layout = QHBoxLayout()
@@ -1055,7 +1366,14 @@ class CalibrationUI(QMainWindow):
         idea_label.setStyleSheet("color: #888888; font-size: 11px;")
         footer_layout.addWidget(idea_label)
 
-        main_layout.addLayout(footer_layout)
+        idea_label2 = QLabel("Webhook System: vex")
+        idea_label2.setStyleSheet("color: #888888; font-size: 11px;")
+        footer_layout.addWidget(idea_label2)
+
+        scroll_layout.addLayout(footer_layout)
+
+        scroll_area.setWidget(scroll_widget)
+        main_layout.addWidget(scroll_area)
 
     def create_calibration_row(self, parent_layout, coord_name, description):
         frame = QFrame()
@@ -1123,7 +1441,7 @@ class CalibrationUI(QMainWindow):
 
     def get_coord_text(self, coord_name):
         coord = self.automation.coordinates[coord_name]
-        if coord_name == 'reel_bar':
+        if coord_name == 'reel_bar' or coord_name == 'fish_caught_desc':
             return f"Current: ({coord[0]}, {coord[1]}) to ({coord[2]}, {coord[3]})"
         else:
             return f"Current: ({coord[0]}, {coord[1]})"
@@ -1143,6 +1461,10 @@ class CalibrationUI(QMainWindow):
             display_name = self.coord_labels[coord_name].split(' - ')[0]
             message = f"{display_name} - Step 1: TOP-LEFT corner"
             self.reel_bar_step = 1
+        elif coord_name == 'fish_caught_desc':
+            display_name = self.coord_labels[coord_name].split(' - ')[0]
+            message = f"Calibrating: {display_name} - Click the top-left corner of the description area"
+            self.fish_caught_desc_step = 1
         else:
             # Get a cleaner name for display
             display_name = self.coord_labels[coord_name].split(' - ')[0]
@@ -1188,6 +1510,31 @@ class CalibrationUI(QMainWindow):
                 base_y2 = round(y / current_scale)
                 self.automation.base_coordinates['reel_bar'] = (
                     self.reel_bar_coords[0], self.reel_bar_coords[1], base_x2, base_y2
+                )
+        elif self.current_calibration == 'fish_caught_desc':
+            if self.fish_caught_desc_step == 1:
+                # Store top-left coordinates (as base coordinates)
+                self.fish_caught_desc_top_left = (base_x, base_y)
+                self.fish_caught_desc_step = 2
+
+                # Close current overlay
+                self.overlay.close()
+
+                # Show second overlay for bottom-right with improved messaging
+                display_name = self.coord_labels['fish_caught_desc'].split(' - ')[0]
+                message = f"Calibrating: {display_name} - Click the bottom-right corner of the description area"
+                self.fish_caught_desc_step = 2
+                self.overlay = CalibrationOverlay(message)
+                self.overlay.coordinate_selected.connect(self.on_calibration_click)
+                self.overlay.calibration_cancelled.connect(self.cancel_calibration)
+                self.overlay.show()
+                return
+            else:
+                # Complete fish caught description calibration with bottom-right (as base coordinates)
+                self.fish_caught_desc_bottom_right = (base_x, base_y)
+                self.automation.base_coordinates['fish_caught_desc'] = (
+                    self.fish_caught_desc_top_left[0], self.fish_caught_desc_top_left[1],
+                    self.fish_caught_desc_bottom_right[0], self.fish_caught_desc_bottom_right[1]
                 )
         else:
             # Regular coordinate calibration (store as base coordinates)

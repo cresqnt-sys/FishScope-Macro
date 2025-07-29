@@ -1,0 +1,20 @@
+{
+    "common": [
+        "Flounder",
+        "Stonefish",
+        "Silverfin",
+        "Emberfin",
+        "Rosefin",
+        "Shrimpite"
+    ],
+    "uncommon": [
+        "Gwrasse",
+        "Bluetang",
+        "Moonfish",
+        "Duskray"
+    ],
+    "rare": [
+        "Spiraldrift",
+        "Spinepuff"
+    ]
+}
