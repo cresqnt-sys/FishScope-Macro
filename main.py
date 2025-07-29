@@ -204,37 +204,37 @@ class MouseAutomation:
 
             # Move to fish button and click (faster timing)
             fish_x, fish_y = self.coordinates['fish_button']
-            autoit.mouse_move(fish_x, fish_y, 3)
+            autoit.mouse_move(fish_x, fish_y, 6)  # Slowed down from 3 to 6 (50% slower)
             time.sleep(0.1)  # Reduced from 0.3
             autoit.mouse_click("left")
             # Move to idle area immediately after click
-            autoit.mouse_move(idle_x, idle_y, 3)
+            autoit.mouse_move(idle_x, idle_y, 6)  # Slowed down from 3 to 6 (50% slower)
             time.sleep(0.15)  # Reduced from 0.3
 
             # Auto-sell (skip on first loop, faster timing)
             if not first_loop:
                 # Click first item
                 item_x, item_y = self.coordinates['first_item']
-                autoit.mouse_move(item_x, item_y, 3)
+                autoit.mouse_move(item_x, item_y, 6)  # Slowed down from 3 to 6 (50% slower)
                 time.sleep(0.1)  # Reduced from 0.3
                 autoit.mouse_click("left")
-                autoit.mouse_move(idle_x, idle_y, 3)  # Move to idle
+                autoit.mouse_move(idle_x, idle_y, 6)  # Slowed down from 3 to 6 (50% slower)
                 time.sleep(0.15)  # Reduced from 0.3
 
                 # Click sell button
                 sell_x, sell_y = self.coordinates['sell_button']
-                autoit.mouse_move(sell_x, sell_y, 3)
+                autoit.mouse_move(sell_x, sell_y, 6)  # Slowed down from 3 to 6 (50% slower)
                 time.sleep(0.1)  # Reduced from 0.3
                 autoit.mouse_click("left")
-                autoit.mouse_move(idle_x, idle_y, 3)  # Move to idle
+                autoit.mouse_move(idle_x, idle_y, 6)  # Slowed down from 3 to 6 (50% slower)
                 time.sleep(0.15)  # Reduced from 0.3
 
                 # Click confirm button
                 confirm_x, confirm_y = self.coordinates['confirm_button']
-                autoit.mouse_move(confirm_x, confirm_y, 3)
+                autoit.mouse_move(confirm_x, confirm_y, 6)  # Slowed down from 3 to 6 (50% slower)
                 time.sleep(0.1)  # Reduced from 0.3
                 autoit.mouse_click("left")
-                autoit.mouse_move(idle_x, idle_y, 3)  # Move to idle
+                autoit.mouse_move(idle_x, idle_y, 6)  # Slowed down from 3 to 6 (50% slower)
                 time.sleep(0.15)  # Reduced from 0.3
             else:
                 first_loop = False
@@ -253,7 +253,7 @@ class MouseAutomation:
                 # Use tolerance-based white detection instead of exact match
                 if self.is_white_pixel(color, tolerance=15):  # More flexible white detection
                     # Move mouse to idle position (using calibrated coordinate)
-                    autoit.mouse_move(idle_x, idle_y, 3)
+                    autoit.mouse_move(idle_x, idle_y, 6)  # Slowed down from 3 to 6 (50% slower)
                     time.sleep(0.05)  # 50ms delay
 
                     # Sample bar color from calibrated shaded area
@@ -289,11 +289,11 @@ class MouseAutomation:
 
             # Close the catch screen (faster)
             close_x, close_y = self.coordinates['close_button']
-            autoit.mouse_move(close_x, close_y, 3)
+            autoit.mouse_move(close_x, close_y, 6)  # Slowed down from 3 to 6 (50% slower)
             time.sleep(0.2)  # Reduced from 0.7
             autoit.mouse_click("left")
             # Move to idle area immediately after click
-            autoit.mouse_move(idle_x, idle_y, 3)
+            autoit.mouse_move(idle_x, idle_y, 6)  # Slowed down from 3 to 6 (50% slower)
             time.sleep(0.15)  # Reduced from 0.3
 
     def start_automation(self):
