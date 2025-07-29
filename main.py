@@ -10,7 +10,7 @@ import os
 import sys
 from PyQt6.QtWidgets import (QApplication, QMainWindow, QVBoxLayout, QHBoxLayout,
                             QWidget, QPushButton, QLabel, QFrame, QScrollArea,
-                            QMessageBox, QGroupBox, QSpinBox, QCheckBox, QComboBox)
+                            QMessageBox, QGroupBox, QComboBox)
 from PyQt6.QtCore import Qt, QTimer, pyqtSignal, QObject, QPoint
 from PyQt6.QtGui import QFont, QCursor, QPainter, QPen, QColor, QIcon
 from updater import AutoUpdater
@@ -24,13 +24,10 @@ class MouseAutomation:
         self.thread = None
         self.config_file = "fishscopeconfig.json"
 
-        self.setup_dpi_awareness()
-        self.dpi_scale_factor = self.get_dpi_scale_factor()
-        self.manual_scale_override = None
-        self.auto_scale_enabled = True
-
-        self.screen_width, self.screen_height = pyautogui.size()
-        self.base_coordinates = {
+        # Get screen dimensions using multiple methods for better compatibility
+        self.screen_width, self.screen_height = self.get_screen_dimensions()
+        print(f"Detected screen dimensions: {self.screen_width}x{self.screen_height}")
+        self.coordinates = {
             'fish_button': (850, 830),
             'white_diamond': (1176, 836),
             'reel_bar': (757, 762, 1161, 782),
@@ -43,83 +40,43 @@ class MouseAutomation:
             'shaded_area': (955, 767)
         }
 
-        self.coordinates = {}
         self.shaded_color = (109, 198, 164)
 
         self.load_calibration()
-        self.update_scaled_coordinates()
 
-    def setup_dpi_awareness(self):
+    def get_screen_dimensions(self):
+        """Get screen dimensions using multiple methods for better compatibility"""
         try:
-            ctypes.windll.shcore.SetProcessDpiAwareness(2)
+            # Try using Windows API for virtual screen (all monitors)
+            user32 = ctypes.windll.user32
+            # Get virtual screen dimensions (covers all monitors)
+            virtual_width = user32.GetSystemMetrics(78)  # SM_CXVIRTUALSCREEN
+            virtual_height = user32.GetSystemMetrics(79)  # SM_CYVIRTUALSCREEN
+            if virtual_width > 0 and virtual_height > 0:
+                return (virtual_width, virtual_height)
 
+            # Fallback to primary screen
+            screensize = user32.GetSystemMetrics(0), user32.GetSystemMetrics(1)
+            if screensize[0] > 0 and screensize[1] > 0:
+                return screensize
         except:
-            try:
-                ctypes.windll.user32.SetProcessDPIAware()
+            pass
 
-            except:
-                pass
-
-    def get_dpi_scale_factor(self):
         try:
-            hdc = ctypes.windll.user32.GetDC(0)
-            dpi_x = ctypes.windll.gdi32.GetDeviceCaps(hdc, 88)
-            ctypes.windll.user32.ReleaseDC(0, hdc)
-
-            scale_factor = dpi_x / 96.0
-
-            return scale_factor
-        except Exception:
-            return 1.0
-
-    def get_effective_scale_factor(self):
-        if self.manual_scale_override is not None:
-            return self.manual_scale_override / 100.0
-        elif self.auto_scale_enabled:
-            return self.dpi_scale_factor
-        else:
-            return 1.0
-
-    def update_scaled_coordinates(self):
-        scale_factor = self.get_effective_scale_factor()
-
-        for key, coord in self.base_coordinates.items():
-            if key == 'reel_bar':
-                x1, y1, x2, y2 = coord
-                self.coordinates[key] = (
-                    round(x1 * scale_factor),
-                    round(y1 * scale_factor),
-                    round(x2 * scale_factor),
-                    round(y2 * scale_factor)
-                )
-            else:
-                x, y = coord
-                self.coordinates[key] = (
-                    round(x * scale_factor),
-                    round(y * scale_factor)
-                )
+            # Fallback to pyautogui
+            return pyautogui.size()
+        except:
+            # Final fallback to common resolution
+            return (1920, 1080)
 
 
-
-    def set_manual_scale_override(self, percentage):
-        if percentage is None:
-            self.manual_scale_override = None
-        else:
-            self.manual_scale_override = percentage
-        self.update_scaled_coordinates()
-
-    def set_auto_scale_enabled(self, enabled):
-        self.auto_scale_enabled = enabled
-        self.update_scaled_coordinates()
 
     def save_calibration(self):
         try:
             config_data = {
-                'base_coordinates': self.base_coordinates,
+                'coordinates': self.coordinates,
                 'shaded_color': self.shaded_color,
-                'manual_scale_override': self.manual_scale_override,
-                'auto_scale_enabled': self.auto_scale_enabled,
-                'config_version': '2.0'
+                'config_version': '1.0'
             }
             with open(self.config_file, 'w') as f:
                 json.dump(config_data, f, indent=2)
@@ -132,38 +89,24 @@ class MouseAutomation:
                 with open(self.config_file, 'r') as f:
                     saved_data = json.load(f)
 
-                if isinstance(saved_data, dict) and 'config_version' in saved_data:
-                    if 'base_coordinates' in saved_data:
-                        self.base_coordinates.update(saved_data['base_coordinates'])
-                    if 'shaded_color' in saved_data:
-                        self.shaded_color = tuple(saved_data['shaded_color'])
-                    if 'manual_scale_override' in saved_data:
-                        self.manual_scale_override = saved_data['manual_scale_override']
-                    if 'auto_scale_enabled' in saved_data:
-                        self.auto_scale_enabled = saved_data['auto_scale_enabled']
-
-
-                elif isinstance(saved_data, dict) and 'coordinates' in saved_data:
-                    old_coords = saved_data['coordinates']
-                    for key, coord in old_coords.items():
-                        if key in self.base_coordinates:
+                if isinstance(saved_data, dict) and 'coordinates' in saved_data:
+                    for key, coord in saved_data['coordinates'].items():
+                        if key in self.coordinates:
                             if key == 'reel_bar' and len(coord) == 4:
-                                self.base_coordinates[key] = coord
+                                self.coordinates[key] = coord
                             elif len(coord) == 2:
-                                self.base_coordinates[key] = coord
+                                self.coordinates[key] = coord
 
                     if 'shaded_color' in saved_data:
                         self.shaded_color = tuple(saved_data['shaded_color'])
-
-
-
                 else:
+                    # Legacy format support
                     for key, coord in saved_data.items():
-                        if key in self.base_coordinates:
+                        if key in self.coordinates:
                             if key == 'reel_bar' and len(coord) == 4:
-                                self.base_coordinates[key] = coord
+                                self.coordinates[key] = coord
                             elif len(coord) == 2:
-                                self.base_coordinates[key] = coord
+                                self.coordinates[key] = coord
 
         except Exception:
             pass
@@ -307,7 +250,8 @@ class MouseAutomation:
                 check_x, check_y = self.coordinates['white_diamond']
                 color = self.get_pixel_color(check_x, check_y)
 
-                if color == (255, 255, 255):  # Exact white check
+                # Use tolerance-based white detection instead of exact match
+                if self.is_white_pixel(color, tolerance=15):  # More flexible white detection
                     # Move mouse to idle position (using calibrated coordinate)
                     autoit.mouse_move(idle_x, idle_y, 3)
                     time.sleep(0.05)  # 50ms delay
@@ -390,8 +334,10 @@ class CalibrationOverlay(QWidget):
 
         self.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground)
 
-        screen = QApplication.primaryScreen().geometry()
-        self.setGeometry(screen)
+        # Get the virtual desktop geometry to cover all screens
+        app = QApplication.instance()
+        desktop = app.primaryScreen().virtualGeometry()
+        self.setGeometry(desktop)
 
         self.setMouseTracking(True)
 
@@ -475,15 +421,18 @@ class CalibrationOverlay(QWidget):
             painter.drawEllipse(center_x - 2, center_y - 2, 4, 4)
 
     def mouseMoveEvent(self, event):
-        self.mouse_pos = event.globalPosition().toPoint()
+        # Use QCursor.pos() for more reliable global position detection
+        self.mouse_pos = QCursor.pos()
         self.update()
 
     def mousePressEvent(self, event):
         if event.button() == Qt.MouseButton.LeftButton:
-            click_x = event.globalPosition().toPoint().x()
-            click_y = event.globalPosition().toPoint().y()
+            # Use QCursor.pos() for more reliable global position detection
+            global_pos = QCursor.pos()
+            click_x = global_pos.x()
+            click_y = global_pos.y()
 
-            self.click_pos = event.globalPosition().toPoint()
+            self.click_pos = global_pos
             self.show_click_feedback = True
             self.update()
 
@@ -541,16 +490,16 @@ class CalibrationUI(QMainWindow):
         # Premade calibrations
         self.premade_calibrations = {
             "1920x1080 | Windowed": {
-                'fish_button': (850, 830),
-                'white_diamond': (1176, 836),
-                'reel_bar': (757, 762, 1161, 782),
-                'completed_border': (1139, 762),
-                'close_button': (1113, 342),
-                'first_item': (827, 401),
-                'sell_button': (589, 801),
-                'confirm_button': (802, 620),
-                'mouse_idle_position': (960, 540),  # Center of 1920x1080
-                'shaded_area': (955, 767)
+                'fish_button': (851, 801),
+                'white_diamond': (1177, 803),
+                'reel_bar': (758, 729, 1159, 744),
+                'completed_border': (1135, 745),
+                'close_button': (1108, 336),
+                'first_item': (830, 407),
+                'sell_button': (592, 774),
+                'confirm_button': (789, 615),
+                'mouse_idle_position': (975, 210),
+                'shaded_area': (947, 732)
             },
             "1920x1080 | Full Screen": {
                 'fish_button': (852, 837),
@@ -872,112 +821,6 @@ class CalibrationUI(QMainWindow):
         settings_layout.setContentsMargins(12, 15, 12, 12)
         settings_layout.setSpacing(8)
 
-        # DPI Scaling Section
-        scaling_frame = QFrame()
-        scaling_frame.setStyleSheet("""
-            QFrame {
-                background-color: #3a3a3a;
-                border: 1px solid #555555;
-                border-radius: 6px;
-                margin: 2px;
-            }
-        """)
-        scaling_layout = QVBoxLayout(scaling_frame)
-        scaling_layout.setContentsMargins(10, 8, 10, 8)
-        scaling_layout.setSpacing(6)
-
-        # DPI info header
-        dpi_info_layout = QHBoxLayout()
-        dpi_title = QLabel("DPI Scaling Support")
-        dpi_title.setFont(QFont("Segoe UI", 12, QFont.Weight.Bold))
-        dpi_title.setStyleSheet("color: #ffffff;")
-        dpi_info_layout.addWidget(dpi_title)
-        dpi_info_layout.addStretch()
-
-        detected_dpi = QLabel(f"Detected: {self.automation.dpi_scale_factor:.0%}")
-        detected_dpi.setStyleSheet("color: #4a9eff; font-weight: 600;")
-        dpi_info_layout.addWidget(detected_dpi)
-        scaling_layout.addLayout(dpi_info_layout)
-
-        # Auto scaling checkbox
-        auto_scale_layout = QHBoxLayout()
-        self.auto_scale_checkbox = QCheckBox("Enable automatic DPI scaling")
-        self.auto_scale_checkbox.setChecked(self.automation.auto_scale_enabled)
-        self.auto_scale_checkbox.stateChanged.connect(self.on_auto_scale_changed)
-        self.auto_scale_checkbox.setStyleSheet("""
-            QCheckBox {
-                color: #e0e0e0;
-                font-size: 11px;
-            }
-            QCheckBox::indicator {
-                width: 16px;
-                height: 16px;
-                border: 2px solid #555555;
-                border-radius: 3px;
-                background-color: #2d2d2d;
-            }
-            QCheckBox::indicator:checked {
-                background-color: #4a9eff;
-                border-color: #4a9eff;
-            }
-        """)
-        auto_scale_layout.addWidget(self.auto_scale_checkbox)
-        auto_scale_layout.addStretch()
-        scaling_layout.addLayout(auto_scale_layout)
-
-        # Manual override section
-        manual_layout = QHBoxLayout()
-        manual_label = QLabel("Manual override:")
-        manual_label.setStyleSheet("color: #e0e0e0; font-size: 11px;")
-        manual_layout.addWidget(manual_label)
-
-        self.scale_spinbox = QSpinBox()
-        self.scale_spinbox.setRange(50, 300)
-        self.scale_spinbox.setSuffix("%")
-        self.scale_spinbox.setValue(int(self.automation.get_effective_scale_factor() * 100))
-        self.scale_spinbox.setEnabled(not self.automation.auto_scale_enabled)
-        self.scale_spinbox.valueChanged.connect(self.on_manual_scale_changed)
-        self.scale_spinbox.setStyleSheet("""
-            QSpinBox {
-                background-color: #2d2d2d;
-                color: #e0e0e0;
-                border: 1px solid #555555;
-                border-radius: 4px;
-                padding: 4px;
-                font-size: 11px;
-            }
-        """)
-        manual_layout.addWidget(self.scale_spinbox)
-
-        reset_scale_btn = QPushButton("Reset")
-        reset_scale_btn.clicked.connect(self.reset_scaling)
-        reset_scale_btn.setFixedWidth(60)
-        reset_scale_btn.setStyleSheet("""
-            QPushButton {
-                background-color: #fd7e14;
-                color: white;
-                border: none;
-                padding: 4px 8px;
-                border-radius: 4px;
-                font-size: 10px;
-                font-weight: 600;
-            }
-            QPushButton:hover {
-                background-color: #e8650e;
-            }
-        """)
-        manual_layout.addWidget(reset_scale_btn)
-        manual_layout.addStretch()
-        scaling_layout.addLayout(manual_layout)
-
-        # Add info note about scaling
-        scaling_info = QLabel("ℹ️ Scaling adjusts coordinates in real-time without modifying your saved calibration")
-        scaling_info.setStyleSheet("color: #888888; font-size: 10px; font-style: italic;")
-        scaling_info.setWordWrap(True)
-        scaling_layout.addWidget(scaling_info)
-
-        settings_layout.addWidget(scaling_frame)
-
         auto_save_label = QLabel("Settings are automatically saved to fishscopeconfig.json")
         auto_save_label.setStyleSheet("color: #888888; font-size: 12px;")
         auto_save_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
@@ -1157,18 +1000,10 @@ class CalibrationUI(QMainWindow):
 
 
     def on_calibration_click(self, x, y):
-        # Convert screen coordinates to base coordinates (scale back to 100%)
-        current_scale = self.automation.get_effective_scale_factor()
-
-        # Use round() instead of int() for better precision and to minimize offset
-        # This ensures the coordinate conversion is more accurate
-        base_x = round(x / current_scale)
-        base_y = round(y / current_scale)
-
         if self.current_calibration == 'reel_bar':
             if self.reel_bar_step == 1:
-                # Store top-left coordinates (as base coordinates)
-                self.reel_bar_coords = [base_x, base_y]
+                # Store top-left coordinates
+                self.reel_bar_coords = [x, y]
                 self.reel_bar_step = 2
 
                 # Close current overlay
@@ -1183,18 +1018,15 @@ class CalibrationUI(QMainWindow):
                 self.overlay.show()
                 return
             else:
-                # Complete reel bar calibration with bottom-right (as base coordinates)
-                base_x2 = round(x / current_scale)
-                base_y2 = round(y / current_scale)
-                self.automation.base_coordinates['reel_bar'] = (
-                    self.reel_bar_coords[0], self.reel_bar_coords[1], base_x2, base_y2
+                # Complete reel bar calibration with bottom-right coordinates
+                self.automation.coordinates['reel_bar'] = (
+                    self.reel_bar_coords[0], self.reel_bar_coords[1], x, y
                 )
         else:
-            # Regular coordinate calibration (store as base coordinates)
-            self.automation.base_coordinates[self.current_calibration] = (base_x, base_y)
+            # Regular coordinate calibration
+            self.automation.coordinates[self.current_calibration] = (x, y)
 
-        # Update scaled coordinates and close overlay
-        self.automation.update_scaled_coordinates()
+        # Close overlay
         self.overlay.close()
         self.complete_calibration()
 
@@ -1256,9 +1088,12 @@ class CalibrationUI(QMainWindow):
         self.raise_()  # Bring window to front
         self.activateWindow()  # Make it the active window
 
-    def apply_premade_calibration(self):
+    def apply_premade_calibration(self, config_name=None):
         """Apply the selected premade calibration."""
-        selected_text = self.premade_combo.currentText()
+        if config_name:
+            selected_text = config_name
+        else:
+            selected_text = self.premade_combo.currentText()
 
         if selected_text == "Select a premade calibration..." or selected_text not in self.premade_calibrations:
             msg = QMessageBox(self)
@@ -1286,74 +1121,76 @@ class CalibrationUI(QMainWindow):
             msg.exec()
             return
 
-        # Confirm application
-        msg = QMessageBox(self)
-        msg.setWindowTitle("Apply Premade Calibration")
-        msg.setText(f"Are you sure you want to apply the '{selected_text}' calibration?\n\nThis will overwrite your current coordinate settings.")
-        msg.setStandardButtons(QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No)
-        msg.setDefaultButton(QMessageBox.StandardButton.No)
-        msg.setStyleSheet("""
-            QMessageBox {
-                background-color: #2d2d2d;
-                color: white;
-            }
-            QMessageBox QPushButton {
-                background-color: #4a4a4a;
-                color: white;
-                border: 1px solid #666666;
-                padding: 6px 12px;
-                border-radius: 3px;
-                min-width: 60px;
-            }
-        """)
-
-        if msg.exec() == QMessageBox.StandardButton.Yes:
-            # Apply the premade calibration
-            premade_coords = self.premade_calibrations[selected_text]
-
-            # Update base coordinates
-            for coord_name, coord_value in premade_coords.items():
-                if coord_name in self.automation.base_coordinates:
-                    self.automation.base_coordinates[coord_name] = coord_value
-
-            # Update scaled coordinates
-            self.automation.update_scaled_coordinates()
-
-            # Update all coordinate labels in the UI
-            for coord_name in self.coord_labels_widgets:
-                coord_label = self.coord_labels_widgets[coord_name]
-                coord_label.setText(self.get_coord_text(coord_name))
-
-            # Auto-save the calibration
-            self.automation.save_calibration()
-
-            # Reset combo box selection
-            self.premade_combo.setCurrentIndex(0)
-
-            # Show success message
-            success_msg = QMessageBox(self)
-            success_msg.setWindowTitle("Calibration Applied")
-            success_msg.setText(f"'{selected_text}' calibration has been applied successfully!\n\nSettings have been automatically saved.")
-            success_msg.setIcon(QMessageBox.Icon.Information)
-            success_msg.setStyleSheet("""
+        # Skip confirmation if called programmatically
+        if not config_name:
+            # Confirm application
+            msg = QMessageBox(self)
+            msg.setWindowTitle("Apply Premade Calibration")
+            msg.setText(f"Are you sure you want to apply the '{selected_text}' calibration?\n\nThis will overwrite your current coordinate settings.")
+            msg.setStandardButtons(QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No)
+            msg.setDefaultButton(QMessageBox.StandardButton.No)
+            msg.setStyleSheet("""
                 QMessageBox {
                     background-color: #2d2d2d;
                     color: white;
                 }
                 QMessageBox QPushButton {
-                    background-color: #28a745;
+                    background-color: #4a4a4a;
                     color: white;
-                    border: 1px solid #218838;
-                    padding: 8px 16px;
-                    border-radius: 4px;
-                    min-width: 80px;
-                    font-weight: bold;
-                }
-                QMessageBox QPushButton:hover {
-                    background-color: #218838;
+                    border: 1px solid #666666;
+                    padding: 6px 12px;
+                    border-radius: 3px;
+                    min-width: 60px;
                 }
             """)
-            success_msg.exec()
+
+            if msg.exec() != QMessageBox.StandardButton.Yes:
+                return
+
+        # Apply the premade calibration
+        premade_coords = self.premade_calibrations[selected_text]
+
+        # Update coordinates directly
+        for coord_name, coord_value in premade_coords.items():
+            if coord_name in self.automation.coordinates:
+                self.automation.coordinates[coord_name] = coord_value
+
+        # Update all coordinate labels in the UI
+        for coord_name in self.coord_labels_widgets:
+            coord_label = self.coord_labels_widgets[coord_name]
+            coord_label.setText(self.get_coord_text(coord_name))
+
+        # Auto-save the calibration
+        self.automation.save_calibration()
+
+        # Reset combo box selection if called from UI
+        if not config_name:
+            self.premade_combo.setCurrentIndex(0)
+
+        # Show success message
+        success_msg = QMessageBox(self)
+        success_msg.setWindowTitle("Calibration Applied")
+        success_msg.setText(f"'{selected_text}' calibration has been applied successfully!\n\nSettings have been automatically saved.")
+        success_msg.setIcon(QMessageBox.Icon.Information)
+        success_msg.setStyleSheet("""
+            QMessageBox {
+                background-color: #2d2d2d;
+                color: white;
+            }
+            QMessageBox QPushButton {
+                background-color: #28a745;
+                color: white;
+                border: 1px solid #218838;
+                padding: 8px 16px;
+                border-radius: 4px;
+                min-width: 80px;
+                font-weight: bold;
+            }
+            QMessageBox QPushButton:hover {
+                background-color: #218838;
+            }
+        """)
+        success_msg.exec()
 
     def reset_to_defaults(self):
         # Confirm reset
@@ -1378,8 +1215,8 @@ class CalibrationUI(QMainWindow):
         """)
 
         if msg.exec() == QMessageBox.StandardButton.Yes:
-            # Reset to default base coordinates (designed for 100% scaling)
-            self.automation.base_coordinates = {
+            # Reset to default coordinates
+            self.automation.coordinates = {
                 'fish_button': (850, 830),
                 'white_diamond': (1176, 836),
                 'reel_bar': (757, 762, 1161, 782),
@@ -1394,18 +1231,6 @@ class CalibrationUI(QMainWindow):
 
             # Reset to default shaded color
             self.automation.shaded_color = (109, 198, 164)
-
-            # Reset scaling settings
-            self.automation.set_auto_scale_enabled(True)
-            self.automation.set_manual_scale_override(None)
-
-            # Update UI controls
-            self.auto_scale_checkbox.setChecked(True)
-            self.scale_spinbox.setValue(int(self.automation.get_effective_scale_factor() * 100))
-            self.scale_spinbox.setEnabled(False)
-
-            # Update scaled coordinates
-            self.automation.update_scaled_coordinates()
 
             # Auto-save the reset coordinates
             self.automation.save_calibration()
@@ -1433,47 +1258,16 @@ class CalibrationUI(QMainWindow):
             """)
             success_msg.exec()
 
-    def on_auto_scale_changed(self, state):
-        """Handle auto scaling checkbox change."""
-        enabled = state == Qt.CheckState.Checked.value
-        self.automation.set_auto_scale_enabled(enabled)
-        self.scale_spinbox.setEnabled(not enabled)
-
-        # Update spinbox value when auto scaling is enabled
-        if enabled:
-            self.scale_spinbox.setValue(int(self.automation.get_effective_scale_factor() * 100))
-
-        # Update coordinate labels to reflect new scaling
-        self.update_all_coordinate_labels()
-
-        # Auto-save scaling preference (this only saves scaling settings, not coordinates)
-        self.automation.save_calibration()
-
-    def on_manual_scale_changed(self, value):
-        """Handle manual scale override change."""
-        if not self.automation.auto_scale_enabled:
-            self.automation.set_manual_scale_override(value)
-            self.update_all_coordinate_labels()
-            # Auto-save scaling preference (this only saves scaling settings, not coordinates)
-            self.automation.save_calibration()
-
-    def reset_scaling(self):
-        """Reset scaling to auto-detection."""
-        self.auto_scale_checkbox.setChecked(True)
-        self.automation.set_auto_scale_enabled(True)
-        self.automation.set_manual_scale_override(None)
-        self.scale_spinbox.setValue(int(self.automation.get_effective_scale_factor() * 100))
-        self.scale_spinbox.setEnabled(False)
-        self.update_all_coordinate_labels()
-        # Auto-save scaling preference (this only saves scaling settings, not coordinates)
-        self.automation.save_calibration()
-
     def update_all_coordinate_labels(self):
-        """Update all coordinate labels to reflect current scaling."""
+        """Update all coordinate labels to reflect current coordinates."""
         for coord_name in self.coord_labels.keys():
             if coord_name in self.coord_labels_widgets:
                 coord_label = self.coord_labels_widgets[coord_name]
                 coord_label.setText(self.get_coord_text(coord_name))
+
+    def set_1080p_windowed_config(self):
+        """Set configuration to 1080p windowed mode"""
+        self.apply_premade_calibration("1920x1080 | Windowed")
 
     def check_for_updates(self):
         """Manually check for updates"""
