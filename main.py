@@ -17,8 +17,12 @@ from updater import AutoUpdater
 import requests
 import pytesseract
 import re
+from datetime import datetime, timezone
 
 pyautogui.FAILSAFE = False
+
+pytesseract.pytesseract.tesseract_cmd = r"C:\Program Files\Tesseract-OCR\tesseract.exe"
+
 
 class MouseAutomation:
     def __init__(self):
@@ -67,10 +71,10 @@ class MouseAutomation:
         
         mutations = ["Ruffed", "Crusted", "Slick", "Rough", "Charred", "Shimmering", "Tainted", "Hollow", "Lucid"]
         
-        fish_name_match = re.search(r"You caught a (.*?)!", fish_description)
+        fish_name_match = re.search(r"You've got (.+?)(?:!|\.\.\.)", fish_description)
         
         if fish_name_match:
-            full_fish_name = fish_name_match.group(1).strip()
+            full_fish_name = fish_name_match.group(1).strip(" .!").strip()
             
             mutation = None
             for mut in mutations:
@@ -78,12 +82,13 @@ class MouseAutomation:
                     mutation = mut
                     fish_name = full_fish_name.replace(mut, "").strip()
                     break
-            
+
             if not mutation:
                 fish_name = full_fish_name
-            
+
             return fish_name, mutation
         else:
+            print("Regex failed. Raw OCR text:", fish_description)
             return "Unknown Fish", None
 
     def ocr_extract_text(self, screenshot):
@@ -91,42 +96,41 @@ class MouseAutomation:
 
     def send_webhook_message(self, fish_name, mutation):
         if not self.webhook_url:
+            print("Webhook URL is not set.")
             return
 
+        # Get rarity and color
         if fish_name in self.fish_data:
             rarity = self.fish_data[fish_name]['rarity']
             color = self.get_rarity_color(rarity)
         else:
             rarity = "Unknown"
-            color = 0x69371c
+            color = 0x8B4513  # Default brown color
 
-        if rarity == "Unknown":
-            title = f"You snagged some trash!"
-            description = f"You caught: {fish_name}"
-        else:
-            title = f"Fish Caught!"
-            description = f"You caught a {fish_name}!"
+        # Build fields
+        fields = [
+            {"name": "Fish", "value": fish_name, "inline": True},
+            {"name": "Rarity", "value": rarity, "inline": True}
+        ]
 
         if mutation:
-            description += f"\nMutation: {mutation}"
+            fields.append({"name": "Mutation", "value": mutation, "inline": True})
+
+        # Embed title
+        title = "Fish Caught!" if rarity != "Unknown" else "You snagged some trash!"
 
         embed = {
             "title": title,
-            "description": description,
             "color": color,
-            "timestamp": int(time.time()),
-            "image": {
+            "timestamp": datetime.now(timezone.utc).isoformat().replace("+00:00", "Z"),
+            "fields": fields,
+            "thumbnail": {
                 "url": "https://raw.githubusercontent.com/vexthecoder/FishScope-Macro/main/fishscope-nobg.png"
             },
             "footer": {
                 "text": "FishScope Macro"
             }
         }
-
-        if rarity != "Unknown":
-            embed["fields"] = [
-                {"name": "Rarity", "value": rarity, "inline": True}
-            ]
 
         data = {
             "embeds": [embed]
@@ -135,19 +139,26 @@ class MouseAutomation:
         try:
             response = requests.post(self.webhook_url, json=data)
             response.raise_for_status()
+            print(f"Webhook sent successfully: {response.status_code}")
         except requests.exceptions.RequestException as e:
             print(f"Failed to send webhook: {e}")
+            if hasattr(response, 'text'):
+                print(f"Response content: {response.text}")
+            print(f"Request data: {json.dumps(data, indent=2)}")
 
     def send_webhook_message2(self, title, description, color=0x00ff00):
         if not self.webhook_url:
+            print("Webhook URL is not set.")
             return
 
         embed = {
             "title": title,
-            "description": description,
             "color": color,
-            "timestamp": int(time.time()),
-            "image": {
+            "timestamp": datetime.now(timezone.utc).isoformat().replace("+00:00", "Z"),
+            "fields": [
+                {"name": "Status", "value": description, "inline": False}
+            ],
+            "thumbnail": {
                 "url": "https://raw.githubusercontent.com/vexthecoder/FishScope-Macro/main/fishscope-nobg.png"
             },
             "footer": {
@@ -162,8 +173,12 @@ class MouseAutomation:
         try:
             response = requests.post(self.webhook_url, json=data)
             response.raise_for_status()
+            print(f"Webhook sent successfully: {response.status_code}")
         except requests.exceptions.RequestException as e:
             print(f"Failed to send webhook: {e}")
+            if hasattr(response, 'text'):
+                print(f"Response content: {response.text}")
+            print(f"Request data: {json.dumps(data, indent=2)}")
 
     def get_rarity_color(self, rarity):
         rarity_colors = {
@@ -517,17 +532,16 @@ class MouseAutomation:
             )
 
     def stop_automation(self):
+        if self.running:
+            self.send_webhook_message2(
+                "FishScope Macro Stopped",
+                "The fishing automation has been terminated.",
+                color=0xdc3545  # Red color
+            )
         self.toggle = False
         self.running = False
         if self.thread:
             self.thread.join(timeout=1)
-        
-        # Send webhook message for stop
-        self.send_webhook_message2(
-            "FishScope Macro Stopped",
-            "The fishing automation has been terminated.",
-            color=0xdc3545  # Red color
-        )
 
 class CalibrationOverlay(QWidget):
     coordinate_selected = pyqtSignal(int, int)
