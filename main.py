@@ -116,7 +116,7 @@ class MouseAutomation:
             "color": color,
             "timestamp": int(time.time()),
             "image": {
-                "url": "https://raw.githubusercontent.com/vexthecoder/FishScope-fork/main/fishscope-nobg.png"
+                "url": "https://raw.githubusercontent.com/vexthecoder/FishScope-Macro/main/fishscope-nobg.png"
             },
             "footer": {
                 "text": "FishScope Macro"
@@ -148,7 +148,7 @@ class MouseAutomation:
             "color": color,
             "timestamp": int(time.time()),
             "image": {
-                "url": "https://raw.githubusercontent.com/vexthecoder/FishScope-fork/main/fishscope-nobg.png"
+                "url": "https://raw.githubusercontent.com/vexthecoder/FishScope-Macro/main/fishscope-nobg.png"
             },
             "footer": {
                 "text": "FishScope Macro"
