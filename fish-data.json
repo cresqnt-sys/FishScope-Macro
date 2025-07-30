@@ -1,0 +1,38 @@
+{
+    "Flounder": {
+        "rarity": "Common"
+    },
+    "Stonefish": {
+        "rarity": "Common"
+    },
+    "Silverfin": {
+        "rarity": "Common"
+    },
+    "Emberfin": {
+        "rarity": "Common"
+    },
+    "Rosefin": {
+        "rarity": "Common"
+    },
+    "Shrimpite": {
+        "rarity": "Common"
+    },
+    "Gwrasse": {
+        "rarity": "Uncommon"
+    },
+    "Bluetang": {
+        "rarity": "Uncommon"
+    },
+    "Moonfish": {
+        "rarity": "Uncommon"
+    },
+    "Duskray": {
+        "rarity": "Uncommon"
+    },
+    "Spiraldrift": {
+        "rarity": "Rare"
+    },
+    "Spinepuff": {
+        "rarity": "Rare"
+    }
+}
