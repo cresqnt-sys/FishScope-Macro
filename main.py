@@ -94,7 +94,11 @@ class MouseAutomation:
         self.failsafe_enabled = True  # Default enabled
         self.failsafe_timeout = 20  # 20 seconds timeout
 
-        pass
+        # Bar game settings
+        self.bar_game_tolerance = 5  # Default tolerance for bar game
+
+        # First launch tracking
+        self.first_launch_warning_shown = False
 
         # Get screen dimensions using multiple methods for better compatibility
         self.screen_width, self.screen_height = self.get_screen_dimensions()
@@ -165,7 +169,7 @@ class MouseAutomation:
         elif width == 1920 and height == 1080:
             return "1920x1080_100"  # Default to 100% scale, user can change
         elif width == 2560 and height == 1440:
-            return "1440p"
+            return "2560x1440_100"  # Default to 100% scale, user can change
         elif width == 1366 and height == 768:
             return "1366x768"
         elif width == 3840 and height == 2160:
@@ -230,6 +234,20 @@ class MouseAutomation:
                 'confirm_button': (801, 603),
                 'mouse_idle_position': (970, 220),
                 'shaded_area': (945, 691)
+            }
+        elif resolution == "2560x1440_100":
+            return {
+                'fish_button': (1149, 1089),
+                'white_diamond': (1536, 1093),
+                'reel_bar': (1042, 1000, 1515, 1026),
+                'completed_border': (1479, 959),
+                'close_button': (1455, 491),
+                'fish_caught_desc': (933, 720, 1378, 913),
+                'first_item': (1101, 546),
+                'sell_button': (779, 1054),
+                'confirm_button': (1054, 827),
+                'mouse_idle_position': (1281, 1264),
+                'shaded_area': (1271, 1008)
             }
         elif resolution == "3840x2160_100":
             return {
@@ -353,6 +371,7 @@ class MouseAutomation:
                 'failsafe_enabled': self.failsafe_enabled,
                 'failsafe_timeout': self.failsafe_timeout,
                 'bar_game_tolerance': self.bar_game_tolerance,
+                'first_launch_warning_shown': self.first_launch_warning_shown,
                 'config_version': '2.1'
             }
             with open(self.config_file, 'w') as f:
@@ -404,6 +423,10 @@ class MouseAutomation:
                     # Load enhanced bar game settings
                     if 'bar_game_tolerance' in saved_data:
                         self.bar_game_tolerance = int(saved_data['bar_game_tolerance'])
+
+                    # Load first launch warning flag
+                    if 'first_launch_warning_shown' in saved_data:
+                        self.first_launch_warning_shown = bool(saved_data['first_launch_warning_shown'])
                 else:
                     # Legacy format support
                     for key, coord in saved_data.items():
@@ -650,12 +673,15 @@ class MouseAutomation:
         if fish_name == "Fishing Failed":
             return
 
+        print(f"Checking fish name: '{fish_name}' against fish database with {len(self.fish_data)} entries")
         if fish_name in self.fish_data:
             rarity = self.fish_data[fish_name]['rarity']
             color = self.get_rarity_color(rarity)
+            print(f"Fish '{fish_name}' found in database with rarity: {rarity}")
         else:
             rarity = "Trash"
             color = 0x8B4513  # Default brown color
+            print(f"Fish '{fish_name}' not found in database, marking as trash. Available fish: {list(self.fish_data.keys())}")
 
         if rarity == "Common" and self.ignore_common_fish:
             print("Common fish ignored, not sending webhook.")
@@ -670,8 +696,8 @@ class MouseAutomation:
             print("Trash ignored, not sending webhook.")
             return
 
-        title = "Fish Caught!" if rarity != "Unknown" else "You snagged some trash!"
-        name = "Fish" if rarity != "Unknown" else "Item"
+        title = "Fish Caught!" if rarity != "Trash" else "You snagged some trash!"
+        name = "Fish" if rarity != "Trash" else "Item"
 
         fields = [
             {"name": name, "value": fish_name, "inline": True},
@@ -821,117 +847,131 @@ class MouseAutomation:
         time.sleep(0.15)
 
     def mouse_automation_loop(self):
-        """Main automation loop with faster clicking for reel-in"""
-        while self.running and self.toggle:
-            if not self.toggle:
-                break
-
-            # Move to fish button and click (2x faster)
-            fish_x, fish_y = self.coordinates['fish_button']
-            autoit.mouse_move(fish_x, fish_y, 3)
-            time.sleep(0.15)  # Reduced from 0.3
-            autoit.mouse_click("left")
-            self.apply_mouse_delay()  # Apply additional delay if enabled
-            time.sleep(0.15)  # Reduced from 0.3
-
-            # Auto-sell (skip on first loop, 2x faster)
-            if not self.first_loop:
-                # Click first item
-                item_x, item_y = self.coordinates['first_item']
-                autoit.mouse_move(item_x, item_y, 3)
-                time.sleep(0.15)  # Reduced from 0.3
-                autoit.mouse_click("left")
-                self.apply_mouse_delay()  # Apply additional delay if enabled
-                time.sleep(0.15)  # Reduced from 0.3
-
-                # Click sell button
-                sell_x, sell_y = self.coordinates['sell_button']
-                autoit.mouse_move(sell_x, sell_y, 3)
-                time.sleep(0.15)  # Reduced from 0.3
-                autoit.mouse_click("left")
-                self.apply_mouse_delay()  # Apply additional delay if enabled
-                time.sleep(0.15)  # Reduced from 0.3
-
-                # Click confirm button
-                confirm_x, confirm_y = self.coordinates['confirm_button']
-                autoit.mouse_move(confirm_x, confirm_y, 3)
-                time.sleep(0.15)  # Reduced from 0.3
-                autoit.mouse_click("left")
-                self.apply_mouse_delay()  # Apply additional delay if enabled
-                time.sleep(0.15)  # Reduced from 0.3
-            else:
-                self.first_loop = False
-
-            bar_color = None
-
-            # Check for white pixel (faster detection) with failsafe timeout
-            white_diamond_start_time = time.time()
-            bar_color = None
-
-            while True:
+        """Main automation loop with faster clicking for reel-in and improved error handling"""
+        try:
+            while self.running and self.toggle:
                 if not self.toggle:
-                    return
-
-                check_x, check_y = self.coordinates['white_diamond']
-
-                if self.pixel_search_white(check_x, check_y):
-                    # Move mouse to idle position
-                    idle_x, idle_y = self.coordinates['mouse_idle_position']
-                    autoit.mouse_move(idle_x, idle_y, 3)
-
-                    time.sleep(0.025)
-                    shaded_x, shaded_y = self.coordinates['shaded_area']
-                    bar_color = self.get_pixel_color(shaded_x, shaded_y)
-                    print(f"Detected bar color: {bar_color}")
                     break
 
-                # Check for failsafe timeout
-                if self.failsafe_enabled and (time.time() - white_diamond_start_time) > self.failsafe_timeout:
-                    print(f"Failsafe triggered: No white diamond detected within {self.failsafe_timeout} seconds")
-                    self.execute_failsafe()
-                    # Reset the timer and continue white diamond detection (fish button already clicked in failsafe)
+                try:
+                    # Move to fish button and click (2x faster)
+                    fish_x, fish_y = self.coordinates['fish_button']
+                    autoit.mouse_move(fish_x, fish_y, 3)
+                    time.sleep(0.15)  # Reduced from 0.3
+                    autoit.mouse_click("left")
+                    self.apply_mouse_delay()  # Apply additional delay if enabled
+                    time.sleep(0.15)  # Reduced from 0.3
+
+                    # Auto-sell (skip on first loop, 2x faster)
+                    if not self.first_loop:
+                        # Click first item
+                        item_x, item_y = self.coordinates['first_item']
+                        autoit.mouse_move(item_x, item_y, 3)
+                        time.sleep(0.15)  # Reduced from 0.3
+                        autoit.mouse_click("left")
+                        self.apply_mouse_delay()  # Apply additional delay if enabled
+                        time.sleep(0.15)  # Reduced from 0.3
+
+                        # Click sell button
+                        sell_x, sell_y = self.coordinates['sell_button']
+                        autoit.mouse_move(sell_x, sell_y, 3)
+                        time.sleep(0.15)  # Reduced from 0.3
+                        autoit.mouse_click("left")
+                        self.apply_mouse_delay()  # Apply additional delay if enabled
+                        time.sleep(0.15)  # Reduced from 0.3
+
+                        # Click confirm button
+                        confirm_x, confirm_y = self.coordinates['confirm_button']
+                        autoit.mouse_move(confirm_x, confirm_y, 3)
+                        time.sleep(0.15)  # Reduced from 0.3
+                        autoit.mouse_click("left")
+                        self.apply_mouse_delay()  # Apply additional delay if enabled
+                        time.sleep(0.15)  # Reduced from 0.3
+                    else:
+                        self.first_loop = False
+
+                    bar_color = None
+
+                    # Check for white pixel (faster detection) with failsafe timeout
                     white_diamond_start_time = time.time()
+                    bar_color = None
+
+                    while True:
+                        if not self.toggle:
+                            return
+
+                        check_x, check_y = self.coordinates['white_diamond']
+
+                        if self.pixel_search_white(check_x, check_y):
+                            # Move mouse to idle position
+                            idle_x, idle_y = self.coordinates['mouse_idle_position']
+                            autoit.mouse_move(idle_x, idle_y, 3)
+
+                            time.sleep(0.025)
+                            shaded_x, shaded_y = self.coordinates['shaded_area']
+                            bar_color = self.get_pixel_color(shaded_x, shaded_y)
+                            print(f"Detected bar color: {bar_color}")
+                            break
+
+                        # Check for failsafe timeout
+                        if self.failsafe_enabled and (time.time() - white_diamond_start_time) > self.failsafe_timeout:
+                            print(f"Failsafe triggered: No white diamond detected within {self.failsafe_timeout} seconds")
+                            self.execute_failsafe()
+                            # Reset the timer and continue white diamond detection (fish button already clicked in failsafe)
+                            white_diamond_start_time = time.time()
+                            continue
+
+                        time.sleep(0.05)  # Reduced from 0.1 for faster detection
+
+                    start_time = time.time()
+                    loop_count = 0
+
+                    while True:
+                        if not self.toggle:
+                            break
+                        if (time.time() - start_time) > 9:
+                            break
+
+                        loop_count += 1
+                        if loop_count % 50 == 0:
+                            completed_x, completed_y = self.coordinates['completed_border']
+                            if self.pixel_search_white(completed_x, completed_y, tolerance=15):
+                                time.sleep(1.0)
+                                break
+
+                        search_area = self.coordinates['reel_bar']
+                        found_pos = self.pixel_search_color(*search_area, bar_color, tolerance=5)
+
+                        if found_pos is None:
+                            pyautogui.click()
+
+                    # Extract fish name using OCR and send webhook
+                    fish_name, mutation = self.extract_fish_name()
+                    self.send_webhook_message(fish_name, mutation)
+
+                    time.sleep(0.3)  # Wait a bit for OCR processing
+
+                    # Close the catch screen (keep original timing for X button)
+                    close_x, close_y = self.coordinates['close_button']
+                    autoit.mouse_move(close_x, close_y, 3)
+                    time.sleep(0.7)  # Keep original timing for X button
+                    autoit.mouse_click("left")
+                    self.apply_mouse_delay()  # Apply additional delay if enabled
+                    time.sleep(0.15)  # Reduced from 0.3
+
+                    self.cycle_count += 1
+
+                except Exception as e:
+                    print(f"Error in automation cycle: {e}")
+                    # Continue to next cycle instead of crashing
+                    time.sleep(1)  # Brief pause before retrying
                     continue
 
-                time.sleep(0.05)  # Reduced from 0.1 for faster detection
-
-            start_time = time.time()
-            loop_count = 0
-
-            while True:
-                if not self.toggle:
-                    break
-                if (time.time() - start_time) > 9:
-                    break
-
-                loop_count += 1
-                if loop_count % 50 == 0:
-                    completed_x, completed_y = self.coordinates['completed_border']
-                    if self.pixel_search_white(completed_x, completed_y, tolerance=15):
-                        time.sleep(1.0)
-                        break
-
-                search_area = self.coordinates['reel_bar']
-                found_pos = self.pixel_search_color(*search_area, bar_color, tolerance=5)
-
-                if found_pos is None:
-                    pyautogui.click()
-
-            # Extract fish name using OCR and send webhook
-            fish_name, mutation = self.extract_fish_name()
-            self.send_webhook_message(fish_name, mutation)
-
-            time.sleep(0.3)  # Wait a bit for OCR processing
-
-            # Close the catch screen (keep original timing for X button)
-            close_x, close_y = self.coordinates['close_button']
-            autoit.mouse_move(close_x, close_y, 3)
-            time.sleep(0.7)  # Keep original timing for X button
-            autoit.mouse_click("left")
-            self.apply_mouse_delay()  # Apply additional delay if enabled
-            time.sleep(0.15)  # Reduced from 0.3
-
-            self.cycle_count += 1
+        except Exception as e:
+            print(f"Critical error in automation loop: {e}")
+            print("Automation loop terminated due to error")
+        finally:
+            print("Automation loop ended")
 
     def start_automation(self):
         if not self.toggle:
@@ -968,17 +1008,45 @@ class MouseAutomation:
             )
 
     def stop_automation(self):
-        if self.running:
-            self.send_webhook_message2(
-                "FishScope Macro Stopped",
-                "FishScope has been stopped.",
-                color=0xdc3545  # Red color
-            )
+        """Stop automation with improved thread handling and error recovery"""
+        print("Stop automation requested...")
+
+        # Set stop flags immediately
         self.toggle = False
         self.running = False
         self.first_loop = True
-        if self.thread:
-            self.thread.join(timeout=1)
+
+        # Send webhook notification (non-blocking)
+        try:
+            if self.webhook_url:  # Only send if webhook is configured
+                self.send_webhook_message2(
+                    "FishScope Macro Stopped",
+                    "FishScope has been stopped.",
+                    color=0xdc3545  # Red color
+                )
+        except Exception as e:
+            print(f"Warning: Failed to send stop webhook: {e}")
+
+        # Handle thread termination with better timeout and error handling
+        if self.thread and self.thread.is_alive():
+            print("Waiting for automation thread to stop...")
+            try:
+                # Give thread more time to stop gracefully
+                self.thread.join(timeout=3)
+
+                # Check if thread is still alive after timeout
+                if self.thread.is_alive():
+                    print("Warning: Automation thread did not stop gracefully within timeout")
+                    print("Thread may still be running in background - this is usually safe")
+                    # Note: We don't force-kill threads as it can cause crashes
+                    # The daemon thread will be cleaned up when the main process exits
+                else:
+                    print("Automation thread stopped successfully")
+
+            except Exception as e:
+                print(f"Error during thread cleanup: {e}")
+
+        print("Stop automation completed")
 
 class CalibrationOverlay(QWidget):
     coordinate_selected = pyqtSignal(int, int)
@@ -1870,6 +1938,45 @@ class CalibrationUI(QMainWindow):
                 subprocess.run(['control', 'desk.cpl'], shell=True, check=False)
             except Exception as e2:
                 print(f"Failed to open legacy display settings: {e2}")
+
+    def show_first_launch_warning(self):
+        """Show first launch warning about Custom Fonts in Roblox"""
+        if not self.automation.first_launch_warning_shown:
+            msg = QMessageBox(self)
+            msg.setWindowTitle("Important Warning - Custom Fonts")
+            msg.setText("⚠️ IMPORTANT WARNING ⚠️\n\nUsing Custom Fonts in Roblox will break this macro!\n\nThe macro relies on pixel detection in the shaded area of the fishing bar to determine the correct color for the reeling minigame. Custom fonts can block or interfere with these critical pixels, causing the macro to fail during the fishing process.\n\nPlease ensure that Custom Fonts are DISABLED in Blox/Fish/Voidstrap settings before using this macro.\n\nClick OK to acknowledge this warning.")
+            msg.setIcon(QMessageBox.Icon.Warning)
+            msg.setStandardButtons(QMessageBox.StandardButton.Ok)
+            msg.setDefaultButton(QMessageBox.StandardButton.Ok)
+            msg.setStyleSheet("""
+                QMessageBox {
+                    background-color: #2d2d2d;
+                    color: white;
+                    font-size: 12px;
+                    min-width: 500px;
+                }
+                QMessageBox QPushButton {
+                    background-color: #dc3545;
+                    color: white;
+                    border: 1px solid #c82333;
+                    padding: 8px 16px;
+                    border-radius: 4px;
+                    font-weight: bold;
+                    min-width: 80px;
+                }
+                QMessageBox QPushButton:hover {
+                    background-color: #c82333;
+                }
+                QMessageBox QPushButton:pressed {
+                    background-color: #bd2130;
+                }
+            """)
+
+            result = msg.exec()
+            if result == QMessageBox.StandardButton.Ok:
+                # Mark the warning as shown and save config
+                self.automation.first_launch_warning_shown = True
+                self.automation.save_calibration()
 
     def create_fish_desc_calibration_row(self, parent_layout):
         """Create calibration row specifically for fish caught description"""
@@ -2910,6 +3017,9 @@ def main():
 
 
     ui.show()
+
+    # Show first launch warning about Custom Fonts (1 second delay to ensure UI is ready)
+    QTimer.singleShot(1000, ui.show_first_launch_warning)
 
     # Initialize OCR in background after UI is shown (500ms delay)
     QTimer.singleShot(500, automation.init_ocr_reader_background)
