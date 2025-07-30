@@ -1,5 +1,5 @@
 # FishScope Macro
-[![GitHub All Releases](https://img.shields.io/github/downloads/cresqnt-sys/FishScope/total)](https://github.com/cresqnt-sys/FishScope/releases)
+[![GitHub All Releases](https://img.shields.io/github/downloads/cresqnt-sys/FishScope-macro/total)](https://github.com/cresqnt-sys/FishScope-macro/releases)
 
 FishScope is an open source Sols RNG Macro made for fishing that still works after the newest patches made by the developers.
 
