@@ -925,6 +925,7 @@ class MouseAutomation:
 
                     start_time = time.time()
                     loop_count = 0
+                    bar_was_present = True  # Track if bar was present in previous iteration
 
                     while True:
                         if not self.toggle:
@@ -944,6 +945,13 @@ class MouseAutomation:
 
                         if found_pos is None:
                             pyautogui.click()
+                            # If bar was present before but now isn't, click one more time
+                            if bar_was_present:
+                                time.sleep(0.01)  # Small delay between clicks
+                                pyautogui.click()
+                            bar_was_present = False
+                        else:
+                            bar_was_present = True
 
                     # Extract fish name using OCR and send webhook
                     fish_name, mutation = self.extract_fish_name()
