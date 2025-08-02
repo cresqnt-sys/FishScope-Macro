@@ -14,7 +14,16 @@
     "Rosefin": {
         "rarity": "Common"
     },
-    "Shrimpite": {
+    "Piranha": {
+        "rarity": "Common"
+    },
+    "Zebream": {
+        "rarity": "Common"
+    },
+    "Tunavox": {
+        "rarity": "Common"
+    },
+    "Shrimprite": {
         "rarity": "Common"
     },
     "Gwrasse": {
@@ -29,10 +38,40 @@
     "Duskray": {
         "rarity": "Uncommon"
     },
+    "Squibbly": {
+        "rarity": "Uncommon"
+    },
+    "Turtlo": {
+        "rarity": "Uncommon"
+    },
+    "Octo": {
+        "rarity": "Uncommon"
+    },
+    "Crabbie": {
+        "rarity": "Uncommon"
+    },
     "Spiraldrift": {
         "rarity": "Rare"
     },
     "Spinepuff": {
         "rarity": "Rare"
+    },
+    "Sharko": {
+        "rarity": "Rare"
+    },
+    "Marlin": {
+        "rarity": "Rare"
+    },
+    "Sunfish": {
+        "rarity": "Rare"
+    },
+    "Old Boot": {
+        "rarity": "Trash"
+    },
+    "Tire": {
+        "rarity": "Trash"
+    },
+    "Rusty Can": {
+        "rarity": "Trash"
     }
 }
