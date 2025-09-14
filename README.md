@@ -26,7 +26,7 @@ The most advanced Sols RNG Fishing Macro with Auto Sell and sending caught fish 
 - **pyautogui** (≥0.9.54): Screen capture and mouse control
 - **Pillow** (≥9.0.0): Image processing
 - **keyboard** (≥0.13.5): Global hotkey support
-- **autoit-py** (≥0.1.0): Windows automation
+- **autoit-py** (≥0.1.0): Windows macro support
 - **requests** (≥2.25.0): HTTP requests for auto updater
 
 ## Usage

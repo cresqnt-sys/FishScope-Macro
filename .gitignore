@@ -209,3 +209,6 @@ fishscopeconfig.json
 build.py
 version.txt
 hook-easyocr.py
+.github
+test_webhooks.py
+debug_ocr_capture.png
