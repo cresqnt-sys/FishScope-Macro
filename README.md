@@ -14,7 +14,7 @@
 ---
 
 
-## 🛠️ Installation
+## Installation
 
 ### Prerequisites
 - Python 3.7 or higher
