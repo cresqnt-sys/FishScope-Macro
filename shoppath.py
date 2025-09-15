@@ -5,6 +5,7 @@ from pynput.keyboard import Key, Controller as KeyboardController
 from pynput.mouse import Button, Controller as MouseController
 from mousekey import MouseKey
 from time import sleep, perf_counter
+from screeninfo import get_monitors
 
 kc = KeyboardController()
 mc = MouseController()
@@ -88,6 +89,29 @@ def run_macro(macro, delay=2):
                     mkey.move_to(int(action["x"]), int(action["y"]))
                 mc.scroll(action["dx"], action["dy"])
 
+def drag_camera_up():
+    """Perform an upward camera drag using mouse movement"""
+    try:
+        monitor = get_monitors()[0]
+        screen_width = monitor.width
+        screen_height = monitor.height
+    except IndexError:
+        print("Error: Could not detect a monitor. Using default 1920x1080.")
+        screen_width, screen_height = 1920, 1080
+    
+    center_x = screen_width // 2
+    start_y = int(screen_height * 0.8)  # Start from bottom (80% down)
+    end_y = int(screen_height * 0.2)    # End at top (20% down)
+    
+    # Move to start position and perform upward drag
+    mkey.move_to(center_x, start_y)
+    sleep(0.1)
+    mc.press(Button.right)
+    sleep(0.1)
+    mkey.move_to(center_x, end_y)
+    sleep(0.1)
+    mc.release(Button.right)
+
 
 macro_actions = [{'type': 'key_press', 'key': 'w'},
 {'type': 'wait', 'duration': 1},
@@ -170,6 +194,7 @@ macro_actions = [{'type': 'key_press', 'key': 'w'},
 {'type': 'key_release', 'key': 'e'}]
 
 if __name__ == "__main__":
+    # Execute the navigation macro
     run_macro([{'type': 'key_press', 'key': 'w'},
 {'type': 'wait', 'duration': 1},
 {'type': 'key_press', 'key': 'a'},
@@ -249,3 +274,18 @@ if __name__ == "__main__":
 {'type': 'key_press', 'key': 'e'},
 {'type': 'wait', 'duration': 141},
 {'type': 'key_release', 'key': 'e'}])
+    
+    # Wait 1 second after macro completion
+    print("Navigation complete. Waiting 1 second before camera adjustment...")
+    sleep(1)
+    
+    # Perform upward camera drag
+    print("Adjusting camera angle...")
+    drag_camera_up()
+    
+    # Wait 4 seconds before clicking SELL
+    print("Camera adjusted. Waiting 4 seconds before SELL action...")
+    sleep(4)
+    
+    # Click SELL (you can modify this part if needed)
+    print("Ready to SELL!")

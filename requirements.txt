@@ -2,9 +2,13 @@ PyQt6
 Pillow
 keyboard
 autoit
+pyautogui
 requests
 numpy
 pytesseract
 opencv-python
 fuzzywuzzy
 python-Levenshtein
+screeninfo
+pynput
+mousekey

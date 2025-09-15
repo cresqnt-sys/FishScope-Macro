@@ -1382,6 +1382,45 @@ class MouseAutomation:
         if self.mouse_delay_enabled and self.mouse_delay_ms > 0:
             time.sleep(self.mouse_delay_ms / 1000.0)  # Convert ms to seconds
 
+    def perform_drag_up(self):
+        """Perform upward drag to adjust camera view"""
+        try:
+            # Get screen dimensions using the same method as autoalign
+            try:
+                from screeninfo import get_monitors
+                monitor = get_monitors()[0]
+                screen_width = monitor.width
+                screen_height = monitor.height
+            except (ImportError, IndexError):
+                print("Error: Could not detect monitor. Using default 1920x1080.")
+                screen_width, screen_height = 1920, 1080
+
+            center_x = screen_width // 2
+            start_y = int(screen_height * 0.8)    # Start 80% down from the top
+            end_y = int(screen_height * 0.2)      # End 20% down from the top (drag up)
+
+            print("Performing upward camera drag...")
+            
+            # Move to the start position instantly (speed=0)
+            autoit.mouse_move(x=center_x, y=start_y, speed=0)
+            time.sleep(0.1)
+
+            # Press and hold the right mouse button
+            autoit.mouse_down("right")
+            time.sleep(0.1)
+
+            # Drag the mouse up to the end position with a smooth speed
+            autoit.mouse_move(x=center_x, y=end_y, speed=10)
+            time.sleep(0.1)
+
+            # Release the right mouse button
+            autoit.mouse_up("right")
+            
+            print("Upward camera drag completed")
+            
+        except Exception as e:
+            print(f"Error performing drag up: {e}")
+
     def run_external_script(self, script_name, delay=1):
         """Run external scripts with proper error handling"""
         if not EXTERNAL_SCRIPTS_AVAILABLE:
@@ -1756,6 +1795,10 @@ class MouseAutomation:
     def press_backslash_sequence(self):
         """Press backslash, enter, backslash sequence"""
         try:
+            # Focus RobloxPlayerBeta.exe before sending the sequence
+            self.focus_roblox_window()
+            time.sleep(0.5)  # Small delay to ensure window is focused
+            
             # Press backslash
             autoit.send("\\")
             time.sleep(1.2)  # Slightly longer delay to ensure input is registered
@@ -1771,6 +1814,10 @@ class MouseAutomation:
         except Exception as e:
             # Try alternative method if autoit fails
             try:
+                # Also try to focus with alternative method
+                self.focus_roblox_window()
+                time.sleep(0.5)
+                
                 import keyboard
                 keyboard.send("\\")
                 time.sleep(1.2)
@@ -1780,6 +1827,35 @@ class MouseAutomation:
                 time.sleep(1.2)
             except Exception as e2:
                 pass
+
+    def focus_roblox_window(self):
+        """Focus RobloxPlayerBeta.exe window"""
+        try:
+            if WIN32_AVAILABLE:
+                import win32gui
+                
+                def enum_windows_callback(hwnd, windows):
+                    if win32gui.IsWindowVisible(hwnd):
+                        window_text = win32gui.GetWindowText(hwnd)
+                        if "Roblox" in window_text:
+                            windows.append(hwnd)
+                    return True
+
+                windows = []
+                win32gui.EnumWindows(enum_windows_callback, windows)
+                if windows:
+                    win32gui.SetForegroundWindow(windows[0])
+                    print("Focused RobloxPlayerBeta.exe window")
+                    return True
+                else:
+                    print("No Roblox window found to focus")
+                    return False
+            else:
+                print("Win32 not available for window focusing")
+                return False
+        except Exception as e:
+            print(f"Error focusing Roblox window: {e}")
+            return False
 
     def is_roblox_running(self):
         """Check if RobloxPlayerBeta.exe is running"""
@@ -2032,6 +2108,23 @@ class MouseAutomation:
                         if not self.run_external_script("shoppath", delay=2):
                             print("Failed to run shop path script")
                             # Continue anyway
+                        
+                        # Wait 1 second before performing drag up
+                        sleep_result = self.interruptible_sleep(1.0)
+                        if sleep_result == "auto_reconnect":
+                            if self.perform_auto_reconnect():
+                                # Reset automation state after reconnect
+                                self.current_fish_count = 0
+                                self.automation_phase = "initialization"
+                                continue
+                            else:
+                                print("Auto reconnect failed, continuing with normal macro")
+                        elif sleep_result == False:
+                            # Macro was stopped
+                            break
+                        
+                        # Perform drag up for camera adjustment
+                        self.perform_drag_up()
                         
                         # Wait 4 seconds before clicking Sell Fish Shop (with auto reconnect check)
                         sleep_result = self.interruptible_sleep(4.0)

@@ -8,7 +8,7 @@ import sys
 import os
 
 # Current version - update this when releasing new versions
-CURRENT_VERSION = "2.0"
+CURRENT_VERSION = "2.1"
 
 class UpdateChecker(QThread):
     update_available = pyqtSignal(str, str)  # latest_version, download_url
