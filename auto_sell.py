@@ -175,24 +175,18 @@ class AutoSellManager:
                 self.first_loop = False
             return True  # Return True as this is expected behavior
         
-        print("Performing auto sell sequence...")
-        
         # Step 1: Click first item
         if not self.click_first_item():
-            print("Failed to click first item during auto sell")
             return False
         
         # Step 2: Click sell button
         if not self.click_sell_button():
-            print("Failed to click sell button during auto sell")
             return False
         
         # Step 3: Click confirm button
         if not self.click_confirm_button():
-            print("Failed to click confirm button during auto sell")
             return False
         
-        print("Auto sell sequence completed successfully")
         return True
     
     def perform_manual_sell(self):
@@ -204,16 +198,9 @@ class AutoSellManager:
         Returns:
             bool: True if successful, False otherwise
         """
-        print("Performing manual sell sequence...")
-        
         success = (self.click_first_item() and 
                   self.click_sell_button() and 
                   self.click_confirm_button())
-        
-        if success:
-            print("Manual sell sequence completed successfully")
-        else:
-            print("Manual sell sequence failed")
         
         return success
     

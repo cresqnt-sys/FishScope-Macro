@@ -65,13 +65,34 @@ pynput_special_buttons = {
     "Button.middle": Button.middle
 }
 
-def run_macro(macro, delay=2):
-    sleep(delay)
+def run_macro(macro, delay=2, emergency_stop_check=None):
+    # Break initial delay into smaller chunks for emergency stop checking
+    for _ in range(int(delay * 10)):  # Check every 0.1 seconds
+        if emergency_stop_check and emergency_stop_check():
+            return
+        sleep(0.1)
 
     for action in macro:
+        # Check for emergency stop before each action
+        if emergency_stop_check and emergency_stop_check():
+            return
+            
         match action["type"]:
             case "wait":
-                sleep(action["duration"] / 1000.0)
+                # Break wait duration into smaller chunks for emergency stop checking
+                wait_duration = action["duration"] / 1000.0
+                chunks = int(wait_duration * 10)  # Check every 0.1 seconds
+                remainder = wait_duration % 0.1
+                
+                for _ in range(chunks):
+                    if emergency_stop_check and emergency_stop_check():
+                        return
+                    sleep(0.1)
+                
+                if remainder > 0:
+                    if emergency_stop_check and emergency_stop_check():
+                        return
+                    sleep(remainder)
             case "key_press":
                 key = action["key"]
                 kc.press(pynput_special_keys.get(key, key))
@@ -283,9 +304,9 @@ if __name__ == "__main__":
     print("Adjusting camera angle...")
     drag_camera_up()
     
-    # Wait 4 seconds before clicking SELL
-    print("Camera adjusted. Waiting 4 seconds before SELL action...")
+    # Wait 4 seconds before proceeding 
+    print("Camera adjusted. Waiting 4 seconds before continuing...")
     sleep(4)
     
-    # Click SELL (you can modify this part if needed)
-    print("Ready to SELL!")
+    print("Navigation and camera adjustment complete. Ready for next phase.")
+    # Note: Selling operations are handled by the main macro system

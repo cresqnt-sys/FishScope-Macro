@@ -5,6 +5,7 @@ from pynput.keyboard import Key, Controller as KeyboardController
 from pynput.mouse import Button, Controller as MouseController
 from mousekey import MouseKey
 from time import sleep, perf_counter
+from screeninfo import get_monitors
 
 kc = KeyboardController()
 mc = MouseController()
@@ -68,12 +69,14 @@ def run_macro(macro, delay=2, emergency_stop_check=None):
     # Break initial delay into smaller chunks for emergency stop checking
     for _ in range(int(delay * 10)):  # Check every 0.1 seconds
         if emergency_stop_check and emergency_stop_check():
+            print("Emergency stop detected during non-VIP shop path macro initial delay")
             return
         sleep(0.1)
 
     for action in macro:
         # Check for emergency stop before each action
         if emergency_stop_check and emergency_stop_check():
+            print("Emergency stop detected during non-VIP shop path macro")
             return
             
         match action["type"]:
@@ -85,11 +88,13 @@ def run_macro(macro, delay=2, emergency_stop_check=None):
                 
                 for _ in range(chunks):
                     if emergency_stop_check and emergency_stop_check():
+                        print("Emergency stop detected during non-VIP shop path macro wait")
                         return
                     sleep(0.1)
                 
                 if remainder > 0:
                     if emergency_stop_check and emergency_stop_check():
+                        print("Emergency stop detected during non-VIP shop path macro wait remainder")
                         return
                     sleep(remainder)
             case "key_press":
@@ -109,60 +114,96 @@ def run_macro(macro, delay=2, emergency_stop_check=None):
                     mkey.move_to(int(action["x"]), int(action["y"]))
                 mc.scroll(action["dx"], action["dy"])
 
+def drag_camera_up():
+    """Perform an upward camera drag using mouse movement"""
+    try:
+        monitor = get_monitors()[0]
+        screen_width = monitor.width
+        screen_height = monitor.height
+    except IndexError:
+        print("Error: Could not detect a monitor. Using default 1920x1080.")
+        screen_width, screen_height = 1920, 1080
+    
+    center_x = screen_width // 2
+    start_y = int(screen_height * 0.8)  # Start from bottom (80% down)
+    end_y = int(screen_height * 0.2)    # End at top (20% down)
+    
+    # Move to start position and perform upward drag
+    mkey.move_to(center_x, start_y)
+    sleep(0.1)
+    mc.press(Button.right)
+    sleep(0.1)
+    mkey.move_to(center_x, end_y)
+    sleep(0.1)
+    mc.release(Button.right)
+
 
 macro_actions = [{'type': 'key_press', 'key': 'w'},
-{'type': 'wait', 'duration': 1},
 {'type': 'key_press', 'key': 'a'},
-{'type': 'wait', 'duration': 4882},
+{'type': 'wait', 'duration': 6668},
+{'type': 'key_release', 'key': 'a'},
+{'type': 'wait', 'duration': 32},
 {'type': 'key_press', 'key': 'd'},
-{'type': 'wait', 'duration': 10},
-{'type': 'key_release', 'key': 'a'},
-{'type': 'wait', 'duration': 583},
+{'type': 'wait', 'duration': 557},
 {'type': 'key_release', 'key': 'd'},
-{'type': 'wait', 'duration': 1466},
+{'type': 'wait', 'duration': 1492},
 {'type': 'key_press', 'key': 'a'},
-{'type': 'wait', 'duration': 857},
+{'type': 'wait', 'duration': 1051},
 {'type': 'key_release', 'key': 'a'},
-{'type': 'wait', 'duration': 262},
+{'type': 'wait', 'duration': 360},
 {'type': 'key_release', 'key': 'w'},
-{'type': 'wait', 'duration': 187},
+{'type': 'wait', 'duration': 336},
 {'type': 'key_press', 'key': 's'},
-{'type': 'wait', 'duration': 326},
+{'type': 'wait', 'duration': 258},
 {'type': 'key_release', 'key': 's'},
-{'type': 'wait', 'duration': 149},
-{'type': 'key_press', 'key': 'd'},
-{'type': 'wait', 'duration': 1056},
+{'type': 'wait', 'duration': 157},
+{'type': 'key_press', 'key': 'Key.space'},
+{'type': 'wait', 'duration': 121},
+{'type': 'key_press', 'key': 'a'},
+{'type': 'wait', 'duration': 99},
+{'type': 'key_release', 'key': 'Key.space'},
+{'type': 'wait', 'duration': 515},
+{'type': 'key_press', 'key': 'Key.space'},
+{'type': 'wait', 'duration': 203},
+{'type': 'key_release', 'key': 'Key.space'},
+{'type': 'wait', 'duration': 735},
+{'type': 'key_release', 'key': 'a'},
+{'type': 'wait', 'duration': 99},
 {'type': 'key_press', 'key': 'w'},
-{'type': 'wait', 'duration': 1673},
+{'type': 'wait', 'duration': 2866},
+{'type': 'key_release', 'key': 'w'},
+{'type': 'wait', 'duration': 47},
+{'type': 'key_press', 'key': 'd'},
+{'type': 'wait', 'duration': 100},
+{'type': 'key_press', 'key': 'Key.space'},
+{'type': 'wait', 'duration': 198},
+{'type': 'key_release', 'key': 'Key.space'},
+{'type': 'wait', 'duration': 973},
 {'type': 'key_release', 'key': 'd'},
-{'type': 'wait', 'duration': 2385},
-{'type': 'key_release', 'key': 'w'}]
+{'type': 'wait', 'duration': 191},
+{'type': 'key_press', 'key': 's'},
+{'type': 'wait', 'duration': 862},
+{'type': 'key_release', 'key': 's'},
+{'type': 'wait', 'duration': 766},
+{'type': 'key_press', 'key': 'e'},
+{'type': 'wait', 'duration': 121},
+{'type': 'key_release', 'key': 'e'}]
 
 if __name__ == "__main__":
-    run_macro([{'type': 'key_press', 'key': 'w'},
-{'type': 'wait', 'duration': 1},
-{'type': 'key_press', 'key': 'a'},
-{'type': 'wait', 'duration': 4882},
-{'type': 'key_press', 'key': 'd'},
-{'type': 'wait', 'duration': 10},
-{'type': 'key_release', 'key': 'a'},
-{'type': 'wait', 'duration': 583},
-{'type': 'key_release', 'key': 'd'},
-{'type': 'wait', 'duration': 1466},
-{'type': 'key_press', 'key': 'a'},
-{'type': 'wait', 'duration': 857},
-{'type': 'key_release', 'key': 'a'},
-{'type': 'wait', 'duration': 262},
-{'type': 'key_release', 'key': 'w'},
-{'type': 'wait', 'duration': 187},
-{'type': 'key_press', 'key': 's'},
-{'type': 'wait', 'duration': 326},
-{'type': 'key_release', 'key': 's'},
-{'type': 'wait', 'duration': 149},
-{'type': 'key_press', 'key': 'd'},
-{'type': 'wait', 'duration': 1056},
-{'type': 'key_press', 'key': 'w'},
-{'type': 'wait', 'duration': 1673},
-{'type': 'key_release', 'key': 'd'},
-{'type': 'wait', 'duration': 2385},
-{'type': 'key_release', 'key': 'w'}])
+    # Execute the navigation macro
+    run_macro(macro_actions)
+    
+    # Wait 1 second after macro completion
+    print("Navigation complete. Waiting 1 second before camera adjustment...")
+    sleep(1)
+    
+    # Perform upward camera drag
+    print("Adjusting camera angle...")
+    drag_camera_up()
+    
+    # Wait 4 seconds before proceeding
+    print("Camera adjusted. Waiting 4 seconds before continuing...")
+    sleep(4)
+    
+    print("Navigation and camera adjustment complete. Ready for next phase.")
+    # Note: Selling operations are handled by the main macro system

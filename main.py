@@ -15,6 +15,8 @@ from PyQt6.QtCore import Qt, QTimer, pyqtSignal, QObject, QPoint
 from PyQt6.QtGui import QFont, QCursor, QPainter, QPen, QColor, QIcon, QLinearGradient, QBrush
 from updater import AutoUpdater
 from auto_sell import AutoSellManager
+from reconnect import AutoReconnectManager
+from calibration_manager import CalibrationManager
 import requests
 import re
 from datetime import datetime, timezone
@@ -43,7 +45,6 @@ def setup_tesseract():
     try:
         # First check if tesseract is already available in PATH
         if shutil.which('tesseract'):
-            print("Tesseract found in PATH")
             return True
     except Exception:
         pass
@@ -62,7 +63,6 @@ def setup_tesseract():
     # Check each common path
     for path in common_paths:
         if os.path.exists(path):
-            print(f"Found Tesseract at: {path}")
             pytesseract.pytesseract.tesseract_cmd = path
             
             # Test if the installation works
@@ -72,10 +72,8 @@ def setup_tesseract():
                 # Create a simple test image
                 test_img = Image.new('RGB', (100, 30), color='white')
                 pytesseract.image_to_string(test_img)
-                print("Tesseract configuration successful")
                 return True
             except Exception as e:
-                print(f"Tesseract test failed for {path}: {e}")
                 continue
     
     # If not found in common paths, try to find it in Program Files
@@ -90,7 +88,6 @@ def setup_tesseract():
             matches = glob.glob(pattern)
             for match in matches:
                 if os.path.exists(match):
-                    print(f"Found Tesseract at: {match}")
                     pytesseract.pytesseract.tesseract_cmd = match
                     
                     # Test if the installation works
@@ -98,10 +95,8 @@ def setup_tesseract():
                         from PIL import Image
                         test_img = Image.new('RGB', (100, 30), color='white')
                         pytesseract.image_to_string(test_img)
-                        print("Tesseract configuration successful")
                         return True
                     except Exception as e:
-                        print(f"Tesseract test failed for {match}: {e}")
                         continue
     except Exception:
         pass
@@ -119,8 +114,9 @@ try:
     from autoalign import auto_align_camera
     from fishinglocation import run_macro as run_fishing_location_macro, macro_actions as fishing_location_actions
     from shoppath import run_macro as run_shop_path_macro, macro_actions as shop_path_actions
+    from nonvipfishinglocation import run_macro as run_nonvip_fishing_location_macro, macro_actions as nonvip_fishing_location_actions
+    from nonvipshoppath import run_macro as run_nonvip_shop_path_macro, macro_actions as nonvip_shop_path_actions
     EXTERNAL_SCRIPTS_AVAILABLE = True
-    print("External macro scripts loaded successfully")
 except ImportError as e:
     EXTERNAL_SCRIPTS_AVAILABLE = False
     print(f"Warning: Could not import external macro scripts: {e}")
@@ -185,6 +181,9 @@ class MouseAutomation:
         self.running = False
         self.thread = None
         
+        # Emergency stop mechanism - thread-safe event for instant stopping
+        self.emergency_stop_event = threading.Event()
+        
         # Set config file path (use current directory for both dev and exe)
         self.config_file = os.path.join(os.getcwd(), "fishscopeconfig.json")
         
@@ -205,18 +204,22 @@ class MouseAutomation:
 
         # Auto-sell settings
         self.auto_sell_enabled = True  # Default enabled
+        self.auto_sell_configuration = "Sell All (Recommended)"  # "Legacy" or "Sell All (Recommended)"
 
         # Fish count tracking for auto-sell cycles
         self.fish_count_until_auto_sell = 10  # Default to 10 fish
         self.current_fish_count = 0  # Current count of fish caught in this cycle
 
-        # Auto reconnect settings
-        self.auto_reconnect_enabled = False  # Default disabled
-        self.auto_reconnect_time = 60  # Default 60 minutes
-        self.auto_reconnect_timer_start = None  # Track when macro started
-        self.roblox_private_server_link = ""  # Private server deeplink
-        self.auto_reconnect_in_progress = False  # Flag to disable other functions during reconnect
-        self.roblox_window_mode = "windowed"  # Default to windowed mode ("windowed" or "fullscreen")
+        # Auto reconnect manager
+        self.auto_reconnect_manager = AutoReconnectManager(self)
+
+        # Initialize calibration manager and download calibrations (quietly)
+        self.calibration_manager = CalibrationManager(verbose=False)
+        try:
+            success, message, calibration_data = self.calibration_manager.update_calibrations()
+            # Silently handle calibration updates - no need to print every time
+        except Exception as e:
+            pass  # Silently handle errors
 
         # Macro sequence state tracking
         self.automation_phase = "initialization"  # Track current phase of macro
@@ -226,16 +229,32 @@ class MouseAutomation:
         # First launch tracking
         self.first_launch_warning_shown = False
 
-        # Pathing settings
-        self.disable_all_pathing = False  # For users without VIP gamepass
+        # VIP path settings - True for VIP paths (default), False for non-VIP paths
+        self.use_vip_paths = True  # Use VIP paths by default (faster with VIP gamepass)
 
         # Get screen dimensions using multiple methods for better compatibility
         self.screen_width, self.screen_height = self.get_screen_dimensions()
-        print(f"Detected screen dimensions: {self.screen_width}x{self.screen_height}")
 
-        # Auto-detect resolution and set appropriate coordinates
+        # Detect resolution but don't auto-apply calibrations
         self.current_resolution = self.detect_resolution()
-        self.coordinates = self.get_coordinates_for_resolution(self.current_resolution)
+        # Initialize with basic fallback coordinates - user must manually apply calibrations
+        self.coordinates = {
+            'fish_button': (851, 802),
+            'white_diamond': (1176, 805),
+            'reel_bar': (757, 728, 1163, 750),
+            'completed_border': (1133, 744),
+            'close_button': (1108, 337),
+            'fish_caught_desc': (700, 540, 1035, 685),
+            'first_item': (830, 409),
+            'sell_button': (588, 775),
+            'confirm_button': (797, 613),
+            'mouse_idle_position': (999, 190),
+            'shaded_area': (951, 731),
+            'sell_fish_shop': (900, 600),
+            'collection_button': (950, 650),
+            'exit_collections': (1000, 700),
+            'exit_fish_shop': (1050, 750)
+        }
 
         # Initialize OCR and webhook settings
         self.webhook_url = ""
@@ -261,10 +280,8 @@ class MouseAutomation:
             import numpy as np
             self.np = np
             self.numpy_available = True
-            print("NumPy loaded for ultra-fast reeling")
         except:
             self.numpy_available = False
-            print("NumPy not available - using fallback method")
 
         self.load_calibration()
         self.load_fish_data()
@@ -274,6 +291,64 @@ class MouseAutomation:
             coordinates=self.coordinates,
             apply_mouse_delay_callback=self.apply_mouse_delay
         )
+        
+    # Property wrappers for backward compatibility with auto-reconnect settings
+    @property
+    def auto_reconnect_enabled(self):
+        return self.auto_reconnect_manager.auto_reconnect_enabled
+    
+    @auto_reconnect_enabled.setter
+    def auto_reconnect_enabled(self, value):
+        self.auto_reconnect_manager.auto_reconnect_enabled = value
+        
+    @property
+    def auto_reconnect_time(self):
+        return self.auto_reconnect_manager.auto_reconnect_time
+    
+    @auto_reconnect_time.setter
+    def auto_reconnect_time(self, value):
+        self.auto_reconnect_manager.auto_reconnect_time = value
+        
+    @property
+    def auto_reconnect_timer_start(self):
+        return self.auto_reconnect_manager.auto_reconnect_timer_start
+    
+    @auto_reconnect_timer_start.setter
+    def auto_reconnect_timer_start(self, value):
+        self.auto_reconnect_manager.auto_reconnect_timer_start = value
+        
+    @property
+    def roblox_private_server_link(self):
+        return self.auto_reconnect_manager.roblox_private_server_link
+    
+    @roblox_private_server_link.setter
+    def roblox_private_server_link(self, value):
+        self.auto_reconnect_manager.roblox_private_server_link = value
+        
+    @property
+    def auto_reconnect_in_progress(self):
+        return self.auto_reconnect_manager.auto_reconnect_in_progress
+    
+    @auto_reconnect_in_progress.setter  
+    def auto_reconnect_in_progress(self, value):
+        self.auto_reconnect_manager.auto_reconnect_in_progress = value
+        
+    @property
+    def roblox_window_mode(self):
+        return self.auto_reconnect_manager.roblox_window_mode
+    
+    @roblox_window_mode.setter
+    def roblox_window_mode(self, value):
+        self.auto_reconnect_manager.roblox_window_mode = value
+        
+    @property
+    def backslash_sequence_delay(self):
+        return self.auto_reconnect_manager.backslash_sequence_delay
+    
+    @backslash_sequence_delay.setter
+    def backslash_sequence_delay(self, value):
+        # Ensure minimum of 60 seconds
+        self.auto_reconnect_manager.backslash_sequence_delay = max(60.0, float(value))
 
     def run_with_timeout(self, func, timeout_seconds=5, default_result=None, *args, **kwargs):
         """
@@ -342,234 +417,120 @@ class MouseAutomation:
             return "1920x1080_100"  # Default fallback
 
     def get_coordinates_for_resolution(self, resolution):
-        """Get coordinates based on resolution using original defaults"""
-        if resolution == "1024x768_100":
-            return {
-                'fish_button': (424, 559),
-                'white_diamond': (674, 561),
-                'reel_bar': (360, 504, 665, 522),
-                'completed_border': (663, 560),
-                'close_button': (640, 206),
-                'fish_caught_desc': (300, 350, 600, 450),  # Estimated based on pattern
-                'first_item': (442, 276),
-                'sell_button': (316, 542),
-                'confirm_button': (443, 407),
-                'mouse_idle_position': (529, 162),
-                'shaded_area': (505, 506),
-                'sell_fish_shop': (400, 300),  # Placeholder coordinates
-                'collection_button': (450, 350),  # Placeholder coordinates
-                'exit_collections': (500, 400),  # Placeholder coordinates
-                'exit_fish_shop': (550, 450)  # Placeholder coordinates
-            }
-        elif resolution == "1920x1080_100":
-            return {
-                'fish_button': (851, 802),
-                'white_diamond': (1176, 805),
-                'reel_bar': (757, 728, 1163, 750),
-                'completed_border': (1133, 744),
-                'close_button': (1108, 337),
-                'fish_caught_desc': (700, 540, 1035, 685),
-                'first_item': (830, 409),
-                'sell_button': (588, 775),
-                'confirm_button': (797, 613),
-                'mouse_idle_position': (999, 190),
-                'shaded_area': (951, 731),
-                'sell_fish_shop': (900, 600),  # Placeholder coordinates
-                'collection_button': (950, 650),  # Placeholder coordinates
-                'exit_collections': (1000, 700),  # Placeholder coordinates
-                'exit_fish_shop': (1050, 750)  # Placeholder coordinates
-            }
-        elif resolution == "1920x1080_125":
-            return {
-                'fish_button': (833, 788),
-                'white_diamond': (1176, 805),
-                'reel_bar': (733, 707, 1187, 732),
-                'completed_border': (1157, 772),
-                'close_button': (1127, 307),
-                'fish_caught_desc': (700, 520, 1035, 665),  # Estimated based on pattern
-                'first_item': (823, 403),
-                'sell_button': (587, 767),
-                'confirm_button': (833, 591),
-                'mouse_idle_position': (996, 203),
-                'shaded_area': (951, 731),
-                'sell_fish_shop': (880, 590),  # Placeholder coordinates
-                'collection_button': (930, 640),  # Placeholder coordinates
-                'exit_collections': (980, 690),  # Placeholder coordinates
-                'exit_fish_shop': (1030, 740)  # Placeholder coordinates
-            }
-        elif resolution == "1920x1080_150":
-            return {
-                'fish_button': (819, 777),
-                'white_diamond': (1225, 780),
-                'reel_bar': (709, 684, 1210, 714),
-                'completed_border': (1180, 796),
-                'close_button': (1147, 277),
-                'fish_caught_desc': (700, 500, 1035, 645),  # Estimated based on pattern
-                'first_item': (820, 402),
-                'sell_button': (589, 760),
-                'confirm_button': (801, 603),
-                'mouse_idle_position': (970, 220),
-                'shaded_area': (945, 691),
-                'sell_fish_shop': (860, 580),  # Placeholder coordinates
-                'collection_button': (910, 630),  # Placeholder coordinates
-                'exit_collections': (960, 680),  # Placeholder coordinates
-                'exit_fish_shop': (1010, 730)  # Placeholder coordinates
-            }
-        elif resolution == "2560x1440_100":
-            return {
-                'fish_button': (1149, 1089),
-                'white_diamond': (1536, 1093),
-                'reel_bar': (1042, 1000, 1515, 1026),
-                'completed_border': (1479, 959),
-                'close_button': (1455, 491),
-                'fish_caught_desc': (933, 720, 1378, 913),
-                'first_item': (1101, 546),
-                'sell_button': (779, 1054),
-                'confirm_button': (1054, 827),
-                'mouse_idle_position': (1281, 1264),
-                'shaded_area': (1271, 1008),
-                'sell_fish_shop': (1200, 800),  # Placeholder coordinates
-                'collection_button': (1250, 850),  # Placeholder coordinates
-                'exit_collections': (1300, 900),  # Placeholder coordinates
-                'exit_fish_shop': (1350, 950)  # Placeholder coordinates
-            }
-        elif resolution == "3840x2160_100":
-            return {
-                'fish_button': (1751, 1648),
-                'white_diamond': (2253, 1652),
-                'reel_bar': (1607, 1535, 2233, 1568),
-                'completed_border': (2174, 1384),
-                'close_button': (2136, 789),
-                'fish_caught_desc': (1400, 1080, 2070, 1370),  # Estimated based on pattern
-                'first_item': (1650, 819),
-                'sell_button': (1168, 1588),
-                'confirm_button': (1595, 1238),
-                'mouse_idle_position': (1952, 452),
-                'shaded_area': (1904, 1540),
-                'sell_fish_shop': (1800, 1200),  # Placeholder coordinates
-                'collection_button': (1850, 1250),  # Placeholder coordinates
-                'exit_collections': (1900, 1300),  # Placeholder coordinates
-                'exit_fish_shop': (1950, 1350)  # Placeholder coordinates
-            }
-        elif resolution == "3840x2160_125":
-            return {
-                'fish_button': (1727, 1633),
-                'white_diamond': (2277, 1640),
-                'reel_bar': (1582, 1515, 2257, 1552),
-                'completed_border': (2197, 1412),
-                'close_button': (2156, 758),
-                'fish_caught_desc': (1400, 1060, 2070, 1350),  # Estimated based on pattern
-                'first_item': (1667, 816),
-                'sell_button': (1172, 1575),
-                'confirm_button': (1595, 1235),
-                'mouse_idle_position': (1990, 473),
-                'shaded_area': (1898, 1518),
-                'sell_fish_shop': (1780, 1180),  # Placeholder coordinates
-                'collection_button': (1830, 1230),  # Placeholder coordinates
-                'exit_collections': (1880, 1280),  # Placeholder coordinates
-                'exit_fish_shop': (1930, 1330)  # Placeholder coordinates
-            }
-        elif resolution == "3840x2160_150":
-            return {
-                'fish_button': (1713, 1621),
-                'white_diamond': (2302, 1627),
-                'reel_bar': (1560, 1492, 2278, 1534),
-                'completed_border': (2220, 1435),
-                'close_button': (2176, 727),
-                'fish_caught_desc': (1400, 1040, 2070, 1330),  # Estimated based on pattern
-                'first_item': (1654, 817),
-                'sell_button': (1180, 1567),
-                'confirm_button': (1600, 1204),
-                'mouse_idle_position': (1975, 469),
-                'shaded_area': (1891, 1498),
-                'sell_fish_shop': (1760, 1160),  # Placeholder coordinates
-                'collection_button': (1810, 1210),  # Placeholder coordinates
-                'exit_collections': (1860, 1260),  # Placeholder coordinates
-                'exit_fish_shop': (1910, 1310)  # Placeholder coordinates
-            }
-        elif resolution == "3840x2160_200":
-            return {
-                'fish_button': (1704, 1596),
-                'white_diamond': (2352, 1604),
-                'reel_bar': (1514, 1450, 2328, 1498),
-                'completed_border': (2268, 1488),
-                'close_button': (2216, 670),
-                'fish_caught_desc': (1400, 1020, 2070, 1310),  # Estimated based on pattern
-                'first_item': (1658, 818),
-                'sell_button': (1178, 1546),
-                'confirm_button': (1600, 1224),
-                'mouse_idle_position': (1938, 464),
-                'shaded_area': (1898, 1460),
-                'sell_fish_shop': (1740, 1140),  # Placeholder coordinates
-                'collection_button': (1790, 1190),  # Placeholder coordinates
-                'exit_collections': (1840, 1240),  # Placeholder coordinates
-                'exit_fish_shop': (1890, 1290)  # Placeholder coordinates
-            }
-        elif resolution == "1080p":
-            # Legacy support for old 1080p naming
-            return {
-                'fish_button': (852, 837),
-                'white_diamond': (1176, 837),
-                'reel_bar': (757, 762, 1162, 781),
-                'completed_border': (1139, 763),
-                'close_button': (1113, 344),
-                'fish_caught_desc': (700, 540, 1035, 685),
-                'first_item': (834, 409),
-                'sell_button': (590, 805),
-                'confirm_button': (807, 629),
-                'mouse_idle_position': (1365, 805),
-                'shaded_area': (946, 765),
-                'sell_fish_shop': (900, 630),  # Placeholder coordinates
-                'collection_button': (950, 680),  # Placeholder coordinates
-                'exit_collections': (1000, 730),  # Placeholder coordinates
-                'exit_fish_shop': (1050, 780)  # Placeholder coordinates
-            }
-        elif resolution == "1440p":
-            # Legacy support for 1440p naming
-            return {
-                'fish_button': (1149, 1089),
-                'white_diamond': (1536, 1093),
-                'reel_bar': (1042, 1000, 1515, 1026),
-                'completed_border': (1479, 959),
-                'close_button': (1455, 491),
-                'fish_caught_desc': (933, 720, 1378, 913),
-                'first_item': (1101, 546),
-                'sell_button': (779, 1054),
-                'confirm_button': (1054, 827),
-                'mouse_idle_position': (1281, 1264),
-                'shaded_area': (1271, 1008),
-                'sell_fish_shop': (1200, 800),  # Placeholder coordinates
-                'collection_button': (1250, 850),  # Placeholder coordinates
-                'exit_collections': (1300, 900),  # Placeholder coordinates
-                'exit_fish_shop': (1350, 950)  # Placeholder coordinates
-            }
-        elif resolution == "1366x768":
-            # Legacy support for 1366x768 naming
-            return {
-                'fish_button': (594, 588),
-                'white_diamond': (866, 592),
-                'reel_bar': (513, 529, 855, 545),
-                'completed_border': (839, 577),
-                'close_button': (817, 211),
-                'fish_caught_desc': (497, 384, 735, 486),
-                'first_item': (591, 287),
-                'sell_button': (420, 570),
-                'confirm_button': (567, 443),
-                'mouse_idle_position': (1115, 381),
-                'shaded_area': (664, 531),
-                'sell_fish_shop': (650, 430),  # Placeholder coordinates
-                'collection_button': (700, 480),  # Placeholder coordinates
-                'exit_collections': (750, 530),  # Placeholder coordinates
-                'exit_fish_shop': (800, 580)  # Placeholder coordinates
-            }
-        else:
-            # Default to 1920x1080 100% scale
-            return self.get_coordinates_for_resolution("1920x1080_100")
+        """Get coordinates from calibration manager or use basic fallback"""
+        try:
+            # Try to get coordinates from calibration manager first
+            if hasattr(self, 'calibration_manager'):
+                # Look for exact match by resolution name
+                available_calibrations = self.calibration_manager.get_available_calibrations()
+                
+                # Extract resolution from the detected format (e.g., "2560x1440_100" -> "2560x1440")
+                base_resolution = resolution.split('_')[0]  # Get just the resolution part
+                
+                # Try to find a matching calibration (more flexible matching)
+                best_match = None
+                for calib_name in available_calibrations:
+                    calib_lower = calib_name.lower()
+                    # Check if the base resolution appears in the calibration name
+                    if base_resolution in calib_lower:
+                        best_match = calib_name
+                        break
+                    # Also try the original resolution format
+                    elif resolution.lower() in calib_lower or resolution.replace('_', ' ').lower() in calib_lower:
+                        best_match = calib_name
+                        break
+                
+                if best_match:
+                    coordinates = self.calibration_manager.get_calibration_by_name(best_match)
+                    if coordinates:
+                        # Convert list coordinates to tuples for compatibility
+                        converted_coords = {}
+                        for coord_name, coord_data in coordinates.items():
+                            if isinstance(coord_data, list):
+                                converted_coords[coord_name] = tuple(coord_data)
+                            else:
+                                converted_coords[coord_name] = coord_data
+                        return converted_coords
+                
+                # If no match found, try to get a reasonable fallback calibration
+                if available_calibrations:
+                    # Try to find a good fallback based on resolution similarity
+                    fallback_name = None
+                    
+                    # For 2560x1440, prefer 1920x1080 as it's closest
+                    if "2560x1440" in base_resolution:
+                        for calib_name in available_calibrations:
+                            if "1920x1080" in calib_name.lower():
+                                fallback_name = calib_name
+                                break
+                    
+                    # For other resolutions, try to find closest match
+                    if not fallback_name:
+                        # Preference order: 1920x1080 > 1366x768 > others
+                        preferred_resolutions = ["1920x1080", "1366x768", "1600x900", "1280x720"]
+                        for pref_res in preferred_resolutions:
+                            for calib_name in available_calibrations:
+                                if pref_res in calib_name.lower():
+                                    fallback_name = calib_name
+                                    break
+                            if fallback_name:
+                                break
+                    
+                    # If still no match, use the first available
+                    if not fallback_name:
+                        fallback_name = available_calibrations[0]
+                    
+                    coordinates = self.calibration_manager.get_calibration_by_name(fallback_name)
+                    if coordinates:
+                        # Convert list coordinates to tuples for compatibility
+                        converted_coords = {}
+                        for coord_name, coord_data in coordinates.items():
+                            if isinstance(coord_data, list):
+                                converted_coords[coord_name] = tuple(coord_data)
+                            else:
+                                converted_coords[coord_name] = coord_data
+                        return converted_coords
+        
+        except Exception as e:
+            pass
+        
+        # Ultimate fallback - basic 1920x1080 coordinates
+        fallback_coords = {
+            'fish_button': (851, 802),
+            'white_diamond': (1176, 805),
+            'reel_bar': (757, 728, 1163, 750),
+            'completed_border': (1133, 744),
+            'close_button': (1108, 337),
+            'fish_caught_desc': (700, 540, 1035, 685),
+            'first_item': (830, 409),
+            'sell_button': (588, 775),
+            'confirm_button': (797, 613),
+            'mouse_idle_position': (999, 190),
+            'shaded_area': (951, 731),
+            'sell_fish_shop': (900, 600),
+            'collection_button': (950, 650),
+            'exit_collections': (1000, 700),
+            'exit_fish_shop': (1050, 750)
+        }
+        return fallback_coords
 
 
 
     def save_calibration(self):
+        """Save calibration with proper error handling and backup system"""
         try:
+            # Create backup of existing config if it exists
+            backup_file = None
+            if os.path.exists(self.config_file):
+                backup_file = self.config_file + '.backup'
+                try:
+                    shutil.copy2(self.config_file, backup_file)
+                except Exception as e:
+                    print(f"Warning: Could not create backup file: {e}")
+
+            # Get auto-reconnect config from the manager
+            auto_reconnect_config = self.auto_reconnect_manager.get_config_dict()
+            
             config_data = {
                 'coordinates': self.coordinates,
                 'current_resolution': self.current_resolution,
@@ -584,13 +545,10 @@ class MouseAutomation:
                 'failsafe_timeout': self.failsafe_timeout,
                 'bar_game_tolerance': self.bar_game_tolerance,
                 'auto_sell_enabled': self.auto_sell_enabled,
+                'auto_sell_configuration': self.auto_sell_configuration,
                 'fish_count_until_auto_sell': self.fish_count_until_auto_sell,
-                'auto_reconnect_enabled': self.auto_reconnect_enabled,
-                'auto_reconnect_time': self.auto_reconnect_time,
-                'roblox_private_server_link': self.roblox_private_server_link,
-                'roblox_window_mode': self.roblox_window_mode,
                 'first_launch_warning_shown': self.first_launch_warning_shown,
-                'disable_all_pathing': self.disable_all_pathing,
+                'use_vip_paths': self.use_vip_paths,
                 'webhook_roblox_detected': self.webhook_roblox_detected,
                 'webhook_roblox_reconnected': self.webhook_roblox_reconnected,
                 'webhook_macro_started': self.webhook_macro_started,
@@ -601,126 +559,259 @@ class MouseAutomation:
                 'webhook_error_notifications': self.webhook_error_notifications,
                 'webhook_phase_changes': self.webhook_phase_changes,
                 'webhook_cycle_completion': self.webhook_cycle_completion,
-                'config_version': '2.1'
+                'config_version': '2.1',
+                'save_timestamp': datetime.now().isoformat(),  # Add timestamp for debugging
+                **auto_reconnect_config  # Add auto-reconnect settings
             }
-            with open(self.config_file, 'w') as f:
+            
+            # Validate config data before saving
+            if not isinstance(config_data['coordinates'], dict):
+                raise ValueError("Coordinates data is not a dictionary")
+            
+            # Ensure all required coordinate keys exist
+            required_coords = ['fish_button', 'white_diamond', 'reel_bar', 'completed_border', 
+                             'close_button', 'mouse_idle_position', 'shaded_area']
+            for coord_key in required_coords:
+                if coord_key not in config_data['coordinates']:
+                    print(f"Warning: Missing required coordinate: {coord_key}")
+            
+            # Write to temporary file first, then move to final location (atomic write)
+            temp_file = self.config_file + '.tmp'
+            with open(temp_file, 'w') as f:
                 json.dump(config_data, f, indent=2)
-        except Exception:
-            pass
+            
+            # Verify the written file can be loaded back
+            with open(temp_file, 'r') as f:
+                test_load = json.load(f)
+                if 'coordinates' not in test_load:
+                    raise ValueError("Verification failed: saved config missing coordinates")
+            
+            # Atomic move to final location
+            if os.name == 'nt':  # Windows
+                if os.path.exists(self.config_file):
+                    os.remove(self.config_file)
+                os.rename(temp_file, self.config_file)
+            else:  # Unix-like systems
+                os.rename(temp_file, self.config_file)
+            
+        except Exception as e:
+            error_msg = f"Error saving calibration: {e}"
+            print(error_msg)
+            
+            # Try to restore from backup if save failed
+            if backup_file and os.path.exists(backup_file):
+                try:
+                    shutil.copy2(backup_file, self.config_file)
+                except Exception as restore_error:
+                    print(f"Could not restore from backup: {restore_error}")
+            
+            # Clean up temp file if it exists
+            temp_file = self.config_file + '.tmp'
+            if os.path.exists(temp_file):
+                try:
+                    os.remove(temp_file)
+                except:
+                    pass
+                    
+            # Log error for user visibility
+            if hasattr(self, 'send_error_notification'):
+                self.send_error_notification("Configuration Save Error", error_msg)
 
     def load_calibration(self):
+        """Load calibration with proper error handling and validation"""
         try:
-            if os.path.exists(self.config_file):
-                with open(self.config_file, 'r') as f:
-                    saved_data = json.load(f)
+            if not os.path.exists(self.config_file):
+                print(f"Config file does not exist: {self.config_file}. Using default settings.")
+                return
 
-                if isinstance(saved_data, dict) and 'coordinates' in saved_data:
-                    for key, coord in saved_data['coordinates'].items():
-                        if key in self.coordinates:
-                            if key in ['reel_bar', 'fish_caught_desc'] and len(coord) == 4:
-                                self.coordinates[key] = coord
-                            elif len(coord) == 2:
-                                self.coordinates[key] = coord
+            # Check if backup exists and is newer than main config
+            backup_file = self.config_file + '.backup'
+            if os.path.exists(backup_file):
+                try:
+                    config_mtime = os.path.getmtime(self.config_file)
+                    backup_mtime = os.path.getmtime(backup_file)
+                    
+                    # If backup is newer, main config might be corrupted
+                    if backup_mtime > config_mtime:
+                        # Try to load main config first
+                        try:
+                            with open(self.config_file, 'r') as f:
+                                test_data = json.load(f)
+                            if 'coordinates' not in test_data:
+                                raise ValueError("Main config missing coordinates")
+                        except:
+                            shutil.copy2(backup_file, self.config_file)
+                except Exception as e:
+                    pass  # Continue with main config
 
-                    if 'current_resolution' in saved_data:
-                        self.current_resolution = saved_data['current_resolution']
+            with open(self.config_file, 'r') as f:
+                saved_data = json.load(f)
 
-                    # Load webhook settings
-                    if 'webhook_url' in saved_data:
-                        self.webhook_url = saved_data['webhook_url']
-                    if 'ignore_common' in saved_data:
-                        self.ignore_common_fish = bool(saved_data['ignore_common'])
-                    if 'ignore_uncommon' in saved_data:
-                        self.ignore_uncommon_fish = bool(saved_data['ignore_uncommon'])
-                    if 'ignore_rare' in saved_data:
-                        self.ignore_rare_fish = bool(saved_data['ignore_rare'])
-                    if 'ignore_trash' in saved_data:
-                        self.ignore_trash = bool(saved_data['ignore_trash'])
+            # Validate that we have the expected data structure
+            if not isinstance(saved_data, dict):
+                raise ValueError("Config file is not a valid dictionary")
 
-                    # Load mouse delay settings
-                    if 'mouse_delay_enabled' in saved_data:
-                        self.mouse_delay_enabled = bool(saved_data['mouse_delay_enabled'])
-                    if 'mouse_delay_ms' in saved_data:
-                        self.mouse_delay_ms = int(saved_data['mouse_delay_ms'])
+            if isinstance(saved_data, dict) and 'coordinates' in saved_data:
+                coords_loaded = 0
+                
+                for key, coord in saved_data['coordinates'].items():
+                    if key in self.coordinates:
+                        if key in ['reel_bar', 'fish_caught_desc'] and len(coord) == 4:
+                            self.coordinates[key] = coord
+                            coords_loaded += 1
+                        elif len(coord) == 2:
+                            self.coordinates[key] = coord
+                            coords_loaded += 1
 
-                    # Load failsafe settings
-                    if 'failsafe_enabled' in saved_data:
-                        self.failsafe_enabled = bool(saved_data['failsafe_enabled'])
-                    if 'failsafe_timeout' in saved_data:
-                        timeout = int(saved_data['failsafe_timeout'])
-                        # Enforce minimum of 20 seconds
-                        self.failsafe_timeout = max(20, timeout)
+                if 'current_resolution' in saved_data:
+                    self.current_resolution = saved_data['current_resolution']
 
-                    # Load enhanced bar game settings
-                    if 'bar_game_tolerance' in saved_data:
-                        self.bar_game_tolerance = int(saved_data['bar_game_tolerance'])
+                # Load webhook settings
+                if 'webhook_url' in saved_data:
+                    self.webhook_url = saved_data['webhook_url']
+                if 'ignore_common' in saved_data:
+                    self.ignore_common_fish = bool(saved_data['ignore_common'])
+                if 'ignore_uncommon' in saved_data:
+                    self.ignore_uncommon_fish = bool(saved_data['ignore_uncommon'])
+                if 'ignore_rare' in saved_data:
+                    self.ignore_rare_fish = bool(saved_data['ignore_rare'])
+                if 'ignore_trash' in saved_data:
+                    self.ignore_trash = bool(saved_data['ignore_trash'])
 
-                    # Load auto-sell settings
-                    if 'auto_sell_enabled' in saved_data:
-                        self.auto_sell_enabled = bool(saved_data['auto_sell_enabled'])
-                        if hasattr(self, 'auto_sell_manager'):
-                            self.auto_sell_manager.set_auto_sell_enabled(self.auto_sell_enabled)
+                # Load mouse delay settings
+                if 'mouse_delay_enabled' in saved_data:
+                    self.mouse_delay_enabled = bool(saved_data['mouse_delay_enabled'])
+                if 'mouse_delay_ms' in saved_data:
+                    self.mouse_delay_ms = int(saved_data['mouse_delay_ms'])
 
-                    # Load fish count until auto sell setting
-                    if 'fish_count_until_auto_sell' in saved_data:
-                        self.fish_count_until_auto_sell = int(saved_data['fish_count_until_auto_sell'])
+                # Load failsafe settings
+                if 'failsafe_enabled' in saved_data:
+                    self.failsafe_enabled = bool(saved_data['failsafe_enabled'])
+                if 'failsafe_timeout' in saved_data:
+                    timeout = int(saved_data['failsafe_timeout'])
+                    # Enforce minimum of 20 seconds
+                    self.failsafe_timeout = max(20, timeout)
 
-                    # Load first launch warning flag
-                    if 'first_launch_warning_shown' in saved_data:
-                        self.first_launch_warning_shown = bool(saved_data['first_launch_warning_shown'])
+                # Load enhanced bar game settings
+                if 'bar_game_tolerance' in saved_data:
+                    self.bar_game_tolerance = int(saved_data['bar_game_tolerance'])
 
-                    # Load auto reconnect settings
-                    if 'auto_reconnect_enabled' in saved_data:
-                        self.auto_reconnect_enabled = bool(saved_data['auto_reconnect_enabled'])
-                    if 'auto_reconnect_time' in saved_data:
-                        self.auto_reconnect_time = int(saved_data['auto_reconnect_time'])
-                    if 'roblox_private_server_link' in saved_data:
-                        self.roblox_private_server_link = str(saved_data['roblox_private_server_link'])
-                    if 'roblox_window_mode' in saved_data:
-                        self.roblox_window_mode = str(saved_data['roblox_window_mode'])
-                        
-                    # Load pathing settings
-                    if 'disable_all_pathing' in saved_data:
-                        self.disable_all_pathing = bool(saved_data['disable_all_pathing'])
-                        
-                    # Load enhanced webhook notification settings
-                    if 'webhook_roblox_detected' in saved_data:
-                        self.webhook_roblox_detected = bool(saved_data['webhook_roblox_detected'])
-                    if 'webhook_roblox_reconnected' in saved_data:
-                        self.webhook_roblox_reconnected = bool(saved_data['webhook_roblox_reconnected'])
-                    if 'webhook_macro_started' in saved_data:
-                        self.webhook_macro_started = bool(saved_data['webhook_macro_started'])
-                    elif 'webhook_automation_started' in saved_data:  # Backward compatibility
-                        self.webhook_macro_started = bool(saved_data['webhook_automation_started'])
-                    if 'webhook_macro_stopped' in saved_data:
-                        self.webhook_macro_stopped = bool(saved_data['webhook_macro_stopped'])
-                    elif 'webhook_automation_stopped' in saved_data:  # Backward compatibility
-                        self.webhook_macro_stopped = bool(saved_data['webhook_automation_stopped'])
-                    if 'webhook_auto_sell_started' in saved_data:
-                        self.webhook_auto_sell_started = bool(saved_data['webhook_auto_sell_started'])
-                    if 'webhook_back_to_fishing' in saved_data:
-                        self.webhook_back_to_fishing = bool(saved_data['webhook_back_to_fishing'])
-                    if 'webhook_failsafe_triggered' in saved_data:
-                        self.webhook_failsafe_triggered = bool(saved_data['webhook_failsafe_triggered'])
-                    if 'webhook_error_notifications' in saved_data:
-                        self.webhook_error_notifications = bool(saved_data['webhook_error_notifications'])
-                    if 'webhook_phase_changes' in saved_data:
-                        self.webhook_phase_changes = bool(saved_data['webhook_phase_changes'])
-                    if 'webhook_cycle_completion' in saved_data:
-                        self.webhook_cycle_completion = bool(saved_data['webhook_cycle_completion'])
+                # Load auto-sell settings
+                if 'auto_sell_enabled' in saved_data:
+                    self.auto_sell_enabled = bool(saved_data['auto_sell_enabled'])
+                    if hasattr(self, 'auto_sell_manager'):
+                        self.auto_sell_manager.set_auto_sell_enabled(self.auto_sell_enabled)
+
+                # Load auto-sell configuration setting
+                if 'auto_sell_configuration' in saved_data:
+                    self.auto_sell_configuration = saved_data['auto_sell_configuration']
                 else:
-                    # Legacy format support
-                    for key, coord in saved_data.items():
-                        if key in self.coordinates:
-                            if key in ['reel_bar', 'fish_caught_desc'] and len(coord) == 4:
-                                self.coordinates[key] = coord
-                            elif len(coord) == 2:
-                                self.coordinates[key] = coord
+                    self.auto_sell_configuration = "Sell All (Recommended)"  # Default to Sell All for new configs
 
-        except Exception:
-            pass
+                # Load fish count until auto sell setting
+                if 'fish_count_until_auto_sell' in saved_data:
+                    self.fish_count_until_auto_sell = int(saved_data['fish_count_until_auto_sell'])
 
+                # Load first launch warning flag
+                if 'first_launch_warning_shown' in saved_data:
+                    self.first_launch_warning_shown = bool(saved_data['first_launch_warning_shown'])
 
+                # Load auto reconnect settings via manager
+                self.auto_reconnect_manager.load_config(saved_data)
+                    
+                # Load VIP path settings (with backward compatibility)
+                if 'use_vip_paths' in saved_data:
+                    self.use_vip_paths = bool(saved_data['use_vip_paths'])
+                elif 'disable_all_pathing' in saved_data:
+                    # Backward compatibility: if disable_all_pathing was True, set use_vip_paths to False
+                    # This preserves the user's preference for simpler mode
+                    disable_pathing = bool(saved_data['disable_all_pathing'])
+                    self.use_vip_paths = not disable_pathing  # Invert logic: disabled pathing -> use non-VIP paths
+                    print(f"Migrated disable_all_pathing ({disable_pathing}) to use_vip_paths ({self.use_vip_paths})")
+                else:
+                    self.use_vip_paths = True  # Default to VIP paths
+                    
+                # Load enhanced webhook notification settings
+                if 'webhook_roblox_detected' in saved_data:
+                    self.webhook_roblox_detected = bool(saved_data['webhook_roblox_detected'])
+                if 'webhook_roblox_reconnected' in saved_data:
+                    self.webhook_roblox_reconnected = bool(saved_data['webhook_roblox_reconnected'])
+                if 'webhook_macro_started' in saved_data:
+                    self.webhook_macro_started = bool(saved_data['webhook_macro_started'])
+                elif 'webhook_automation_started' in saved_data:  # Backward compatibility
+                    self.webhook_macro_started = bool(saved_data['webhook_automation_started'])
+                if 'webhook_macro_stopped' in saved_data:
+                    self.webhook_macro_stopped = bool(saved_data['webhook_macro_stopped'])
+                elif 'webhook_automation_stopped' in saved_data:  # Backward compatibility
+                    self.webhook_macro_stopped = bool(saved_data['webhook_automation_stopped'])
+                if 'webhook_auto_sell_started' in saved_data:
+                    self.webhook_auto_sell_started = bool(saved_data['webhook_auto_sell_started'])
+                if 'webhook_back_to_fishing' in saved_data:
+                    self.webhook_back_to_fishing = bool(saved_data['webhook_back_to_fishing'])
+                if 'webhook_failsafe_triggered' in saved_data:
+                    self.webhook_failsafe_triggered = bool(saved_data['webhook_failsafe_triggered'])
+                if 'webhook_error_notifications' in saved_data:
+                    self.webhook_error_notifications = bool(saved_data['webhook_error_notifications'])
+                if 'webhook_phase_changes' in saved_data:
+                    self.webhook_phase_changes = bool(saved_data['webhook_phase_changes'])
+                if 'webhook_cycle_completion' in saved_data:
+                    self.webhook_cycle_completion = bool(saved_data['webhook_cycle_completion'])
+                    
+            else:
+                # Legacy format support
+                coords_loaded = 0
+                for key, coord in saved_data.items():
+                    if key in self.coordinates:
+                        if key in ['reel_bar', 'fish_caught_desc'] and len(coord) == 4:
+                            self.coordinates[key] = coord
+                            coords_loaded += 1
+                        elif len(coord) == 2:
+                            self.coordinates[key] = coord
+                            coords_loaded += 1
+
+        except json.JSONDecodeError as e:
+            error_msg = f"Config file is corrupted (JSON decode error): {e}"
+            print(error_msg)
+            
+            # Try to restore from backup
+            backup_file = self.config_file + '.backup'
+            if os.path.exists(backup_file):
+                try:
+                    shutil.copy2(backup_file, self.config_file)
+                    # Recursively try to load again (but only once to prevent infinite loop)
+                    if not hasattr(self, '_load_retry_attempted'):
+                        self._load_retry_attempted = True
+                        self.load_calibration()
+                        delattr(self, '_load_retry_attempted')
+                except Exception as restore_error:
+                    print(f"Could not restore from backup: {restore_error}")
+                    if hasattr(self, 'send_error_notification'):
+                        self.send_error_notification("Config Load Error", f"Corrupted config file and backup restore failed: {restore_error}")
+            else:
+                if hasattr(self, 'send_error_notification'):
+                    self.send_error_notification("Config Load Error", error_msg)
+                    
+        except FileNotFoundError:
+            print(f"Config file not found: {self.config_file}. Using default settings.")
+            
+        except PermissionError as e:
+            error_msg = f"Permission denied accessing config file: {e}"
+            print(error_msg)
+            if hasattr(self, 'send_error_notification'):
+                self.send_error_notification("Config Permission Error", error_msg)
+                
+        except Exception as e:
+            error_msg = f"Unexpected error loading calibration: {e}"
+            print(error_msg)
+            if hasattr(self, 'send_error_notification'):
+                self.send_error_notification("Config Load Error", error_msg)
+                
+        # Update UI if it's been initialized
+        if hasattr(self, 'coord_labels_widgets') and hasattr(self, 'update_all_coordinate_labels'):
+            try:
+                self.update_all_coordinate_labels()
+            except Exception:
+                pass  # UI might not be fully initialized yet
 
     def get_mouse_position(self):
         return autoit.mouse_get_pos()
@@ -794,10 +885,9 @@ class MouseAutomation:
             if os.path.exists(fish_data_path):
                 with open(fish_data_path, 'r') as f:
                     self.fish_data = json.load(f)
-                print(f"Loaded {len(self.fish_data)} fish entries from bundled file")
                 return
         except Exception as e:
-            print(f"Failed to load bundled fish data: {str(e)}")
+            pass  # Failed to load bundled fish data
         
         # Fallback to online version
         try:
@@ -806,14 +896,11 @@ class MouseAutomation:
             )
             response.raise_for_status()
             self.fish_data = response.json()
-            print(f"Loaded {len(self.fish_data)} fish entries from online source")
         except Exception as e:
-            print(f"Failed to load fish data from online source: {str(e)}")
             self.fish_data = {}
 
     def extract_fish_name(self):
         if 'fish_caught_desc' not in self.coordinates:
-            print("Fish caught description coordinates not set")
             return "Unknown Fish", None
 
         try:
@@ -822,20 +909,15 @@ class MouseAutomation:
 
             try:
                 screenshot.save("debug_ocr_capture.png")
-                print("Saved debug OCR screenshot as 'debug_ocr_capture.png'")
             except Exception as e:
-                print("Failed to save debug OCR screenshot:", e)
+                pass
 
             fish_description = self.ocr_extract_tesseract(screenshot)
 
             if not fish_description.strip():
-                print("OCR returned empty text.")
                 return "Unknown Fish", None
 
-            print(f"Raw OCR text: {fish_description}")
-
             fish_description = self.clean_ocr_text(fish_description)
-            print(f"Cleaned OCR text: {fish_description}")
 
             # Search for fish name using fuzzy matching
             fish_name, mutation = self.search_for_fish_name(fish_description)
@@ -843,7 +925,6 @@ class MouseAutomation:
             if fish_name != "Unknown Fish":
                 return fish_name, mutation
 
-            print("No match found, returning Unknown Fish")
             return "Unknown Fish", None
             
         except Exception as e:
@@ -858,11 +939,9 @@ class MouseAutomation:
             if mutation.lower() in fish_description.lower():
                 mutation_found = mutation
                 fish_description = fish_description.lower().replace(mutation.lower(), '').strip()
-                print(f"Mutation found: {mutation_found}")
                 break
 
         best_match = process.extractOne(fish_description, self.fish_data.keys())
-        print(f"Fuzzy matching '{fish_description}' against fish data: Best match is '{best_match[0]}' with confidence {best_match[1]}")
 
         if best_match and best_match[1] >= 60:
             return best_match[0], mutation_found
@@ -891,7 +970,6 @@ class MouseAutomation:
     def ocr_extract_tesseract(self, image):
         try:
             result = pytesseract.image_to_string(image)
-            print(f"TesseractOCR raw results: {result}")
             return result
         except pytesseract.TesseractNotFoundError:
             print("Tesseract OCR not found. Attempting to reconfigure...")
@@ -899,19 +977,11 @@ class MouseAutomation:
             if setup_tesseract():
                 try:
                     result = pytesseract.image_to_string(image)
-                    print(f"TesseractOCR raw results (after reconfiguration): {result}")
                     return result
                 except Exception as e:
-                    print(f"OCR still failed after reconfiguration: {e}")
-            else:
-                print("Failed to find or configure Tesseract OCR.")
-                print("Please install Tesseract from: https://github.com/UB-Mannheim/tesseract/wiki")
-                print("For now, returning 'Unknown Fish' as fallback.")
+                    pass
             return "Unknown Fish"
         except Exception as e:
-            print(f"OCR Error: {e}")
-            print("Tesseract OCR failed. Please install Tesseract and ensure it's in your PATH.")
-            print("For now, returning 'Unknown Fish' as fallback.")
             return "Unknown Fish"
 
     def extract_fish_name_with_timeout(self):
@@ -964,39 +1034,29 @@ class MouseAutomation:
         if fish_name == "Fishing Failed":
             return
 
-        print(f"Checking fish name: '{fish_name}' against fish database with {len(self.fish_data)} entries")
-
         if fish_name in self.fish_data:
             rarity = self.fish_data[fish_name]["rarity"]
             color = self.get_rarity_color(rarity)
-            print(f"Fish '{fish_name}' found in database with rarity: {rarity}")
 
             if rarity == "Trash":
                 title = "You snagged some trash!"
                 name = "Item"
-                print(f"Fish '{fish_name}' is trash!")
             else:
                 title = "Fish Caught!"
                 name = "Fish"
-                print(f"Fish '{fish_name}' is valid fish with rarity: {rarity}")
         else:
             rarity = "Trash"
             color = 0x8B4513
             title = "You snagged some trash!"
             name = "Item"
-            print(f"Fish '{fish_name}' not found in database, marking as trash.")
 
         if rarity == "Common" and self.ignore_common_fish:
-            print("Common fish ignored, not sending webhook.")
             return
         if rarity == "Uncommon" and self.ignore_uncommon_fish:
-            print("Uncommon fish ignored, not sending webhook.")
             return
         if rarity == "Rare" and self.ignore_rare_fish:
-            print("Rare fish ignored, not sending webhook.")
             return
         if rarity == "Trash" and self.ignore_trash:
-            print("Trash ignored, not sending webhook.")
             return
 
         fields = [
@@ -1048,7 +1108,6 @@ class MouseAutomation:
     def send_webhook_message2(self, title, description, color=0x00ff00):
         """Send general webhook message for status updates"""
         if not self.webhook_url:
-            print("Webhook URL is not set.")
             return
 
         embed = {
@@ -1176,7 +1235,7 @@ class MouseAutomation:
         if self.auto_reconnect_time:
             extra_fields.append({
                 "name": "Reconnect Interval", 
-                "value": f"{self.auto_reconnect_time} minutes", 
+                "value": f"{self.auto_reconnect_time} seconds", 
                 "inline": True
             })
         
@@ -1198,10 +1257,10 @@ class MouseAutomation:
         else:
             extra_fields.append({"name": "Auto-Sell", "value": "Disabled", "inline": True})
             
-        if self.disable_all_pathing:
-            extra_fields.append({"name": "Mode", "value": "Simple Fishing (No Pathing)", "inline": True})
+        if self.use_vip_paths:
+            extra_fields.append({"name": "Mode", "value": "VIP Paths (Fast)", "inline": True})
         else:
-            extra_fields.append({"name": "Mode", "value": "Full Macro", "inline": True})
+            extra_fields.append({"name": "Mode", "value": "Non-VIP Paths (Standard)", "inline": True})
 
         self.send_webhook_notification(
             'macro_started',
@@ -1377,10 +1436,32 @@ class MouseAutomation:
         self.auto_scale_enabled = enabled
         self.update_scaled_coordinates()
 
+    def check_emergency_stop(self):
+        """Check if emergency stop has been triggered. Returns True if should stop immediately."""
+        # Simplified emergency stop check - just check the basic flags
+        return not self.toggle or not self.running
+
     def apply_mouse_delay(self):
-        """Apply additional mouse delay if enabled"""
+        """Apply additional mouse delay if enabled, with emergency stop check"""
+        if self.check_emergency_stop():
+            return False
         if self.mouse_delay_enabled and self.mouse_delay_ms > 0:
-            time.sleep(self.mouse_delay_ms / 1000.0)  # Convert ms to seconds
+            # Break delay into smaller chunks to check for emergency stop
+            delay_sec = self.mouse_delay_ms / 1000.0
+            chunk_size = 0.1  # Check every 100ms
+            chunks = int(delay_sec / chunk_size)
+            remainder = delay_sec % chunk_size
+            
+            for _ in range(chunks):
+                if self.check_emergency_stop():
+                    return False
+                time.sleep(chunk_size)
+            
+            if remainder > 0:
+                if self.check_emergency_stop():
+                    return False
+                time.sleep(remainder)
+        return True
 
     def perform_drag_up(self):
         """Perform upward drag to adjust camera view"""
@@ -1392,14 +1473,11 @@ class MouseAutomation:
                 screen_width = monitor.width
                 screen_height = monitor.height
             except (ImportError, IndexError):
-                print("Error: Could not detect monitor. Using default 1920x1080.")
                 screen_width, screen_height = 1920, 1080
 
             center_x = screen_width // 2
             start_y = int(screen_height * 0.8)    # Start 80% down from the top
             end_y = int(screen_height * 0.2)      # End 20% down from the top (drag up)
-
-            print("Performing upward camera drag...")
             
             # Move to the start position instantly (speed=0)
             autoit.mouse_move(x=center_x, y=start_y, speed=0)
@@ -1416,32 +1494,66 @@ class MouseAutomation:
             # Release the right mouse button
             autoit.mouse_up("right")
             
-            print("Upward camera drag completed")
-            
         except Exception as e:
-            print(f"Error performing drag up: {e}")
+            pass  # Error performing drag up
 
     def run_external_script(self, script_name, delay=1):
-        """Run external scripts with proper error handling"""
+        """Run external scripts with proper error handling and emergency stop checking"""
         if not EXTERNAL_SCRIPTS_AVAILABLE:
             print(f"Warning: External scripts not available, skipping {script_name}")
             return False
 
+        # Check for emergency stop before starting
+        if self.check_emergency_stop():
+            print(f"Emergency stop detected, cancelling {script_name}")
+            return False
+
         try:
             self.external_script_running = True
-            print(f"Running {script_name}...")
+            
+            # Store current toggle/running state before script execution
+            pre_script_toggle = self.toggle
+            pre_script_running = self.running
             
             if script_name == "autoalign":
-                auto_align_camera(delay=delay)
+                # Pass emergency stop check function to external script
+                auto_align_camera(delay=delay, emergency_stop_check=self.check_emergency_stop)
             elif script_name == "fishinglocation":
-                run_fishing_location_macro(fishing_location_actions, delay=delay)
+                if self.use_vip_paths:
+                    run_fishing_location_macro(fishing_location_actions, delay=delay, emergency_stop_check=self.check_emergency_stop)
+                else:
+                    run_nonvip_fishing_location_macro(nonvip_fishing_location_actions, delay=delay, emergency_stop_check=self.check_emergency_stop)
             elif script_name == "shoppath":
-                run_shop_path_macro(shop_path_actions, delay=delay)
+                if self.use_vip_paths:
+                    run_shop_path_macro(shop_path_actions, delay=delay, emergency_stop_check=self.check_emergency_stop)
+                else:
+                    run_nonvip_shop_path_macro(nonvip_shop_path_actions, delay=delay, emergency_stop_check=self.check_emergency_stop)
             else:
-                print(f"Unknown script: {script_name}")
+                self.external_script_running = False
                 return False
+            
+            # Check if toggle/running state changed during script execution (potential unwanted stop)
+            if pre_script_toggle and not self.toggle:
+                print(f"Warning: toggle was set to False during {script_name} execution")
+            if pre_script_running and not self.running:
+                print(f"Warning: running was set to False during {script_name} execution")
                 
-            print(f"{script_name} completed successfully")
+            # Only check for emergency stop if the original states were maintained
+            # This prevents false positives from accidental key presses during script execution
+            if pre_script_toggle and pre_script_running:
+                # If the main flags are still true, continue normally
+                if self.toggle and self.running:
+                    self.external_script_running = False
+                    return True
+                else:
+                    self.external_script_running = False
+                    return False
+            else:
+                # If toggle or running were changed, check the current state
+                if not self.toggle or not self.running:
+                    self.external_script_running = False
+                    return False
+                    
             self.external_script_running = False
             return True
             
@@ -1451,7 +1563,12 @@ class MouseAutomation:
             return False
 
     def click_coordinate(self, coord_name, delay=0.5):
-        """Click a specific coordinate with error checking"""
+        """Click a specific coordinate with error checking and emergency stop support"""
+        # Check for emergency stop before clicking
+        if self.check_emergency_stop():
+            print(f"Emergency stop detected, cancelling click on {coord_name}")
+            return False
+            
         if coord_name not in self.coordinates:
             print(f"Warning: Coordinate '{coord_name}' not found")
             return False
@@ -1461,11 +1578,37 @@ class MouseAutomation:
             if len(coord) >= 2:
                 x, y = coord[0], coord[1]
                 autoit.mouse_move(x, y, 3)
+                
+                # Check for emergency stop during delay
+                if not self.apply_mouse_delay():
+                    print(f"Emergency stop detected during mouse delay for {coord_name}")
+                    return False
+                
                 time.sleep(0.3)
+                
+                # Final emergency stop check before clicking
+                if self.check_emergency_stop():
+                    print(f"Emergency stop detected before clicking {coord_name}")
+                    return False
+                    
                 autoit.mouse_click("left")
-                self.apply_mouse_delay()
-                time.sleep(delay)
-                print(f"Clicked {coord_name} at ({x}, {y})")
+                
+                # Check for emergency stop during post-click delay
+                if not self.apply_mouse_delay():
+                    print(f"Emergency stop detected during post-click delay for {coord_name}")
+                    return False
+                
+                # Break the delay into smaller chunks for emergency stop checking
+                remaining_delay = delay
+                chunk_size = 0.1
+                while remaining_delay > 0:
+                    if self.check_emergency_stop():
+                        print(f"Emergency stop detected during {coord_name} delay")
+                        return False
+                    sleep_time = min(chunk_size, remaining_delay)
+                    time.sleep(sleep_time)
+                    remaining_delay -= sleep_time
+                
                 return True
             else:
                 print(f"Warning: Invalid coordinates for '{coord_name}'")
@@ -1511,445 +1654,22 @@ class MouseAutomation:
         time.sleep(0.15)
 
     def should_auto_reconnect(self):
-        """Check if auto reconnect should be triggered"""
-        if not self.auto_reconnect_enabled or not self.auto_reconnect_timer_start:
-            return False
-        
-        elapsed_time = time.time() - self.auto_reconnect_timer_start
-        return elapsed_time >= (self.auto_reconnect_time * 60)  # Convert minutes to seconds
+        """Check if auto reconnect should be triggered - delegated to manager"""
+        return self.auto_reconnect_manager.should_auto_reconnect()
 
     def get_auto_reconnect_time_remaining(self):
-        """Get remaining time until auto reconnect in seconds"""
-        if not self.auto_reconnect_enabled or not self.auto_reconnect_timer_start:
-            return None
-        
-        elapsed_time = time.time() - self.auto_reconnect_timer_start
-        total_time = self.auto_reconnect_time * 60  # Convert minutes to seconds
-        remaining = total_time - elapsed_time
-        return max(0, remaining)
+        """Get remaining time until auto reconnect in seconds - delegated to manager"""
+        return self.auto_reconnect_manager.get_auto_reconnect_time_remaining()
 
     def interruptible_sleep(self, duration):
-        """Sleep for the specified duration while checking for auto reconnect every 0.1 seconds"""
-        steps = int(duration * 10)  # Check every 0.1 seconds
-        for i in range(steps):
-            if not self.toggle:  # Also check if macro is stopped
-                return False
-            if self.should_auto_reconnect():
-                return "auto_reconnect"
-            time.sleep(0.1)
-        return True
+        """Sleep for the specified duration while checking for emergency stop every 0.1 seconds"""
+        return self.auto_reconnect_manager.interruptible_sleep(duration, self.check_emergency_stop)
 
     def perform_auto_reconnect(self):
-        """Perform the auto reconnect sequence"""
-        try:
-            print("Auto reconnect sequence started")
-            
-            # Set flag to disable other macro functions
-            self.auto_reconnect_in_progress = True
-            
-            # Send webhook notification
-            self.send_webhook_notification(
-                'roblox_reconnected',
-                "🔄 Auto Reconnect Triggered",
-                f"Reconnecting after {self.auto_reconnect_time} minutes...",
-                color=0x17a2b8  # Blue color
-            )
-            
-            # Step 1: Close Roblox instances
-            self.close_roblox_instances()
-            time.sleep(5)  # Give time for Roblox to close
-            
-            # Step 2: Launch private server if link is provided
-            if self.roblox_private_server_link.strip():
-                launch_success = self.launch_private_server()
-                if launch_success:
-                    # Step 3: Wait for Roblox to start and set window mode
-                    if self.wait_for_roblox_and_set_window_mode():
-                        # Send Roblox detected notification
-                        self.send_roblox_detected_notification()
-                        
-                        # Step 4: Wait 60 seconds for Roblox to fully load (still part of auto reconnect period)
-                        print("Waiting 60 seconds for Roblox to fully load...")
-                        for i in range(600):  # 60 seconds in 0.1 second intervals
-                            if not self.toggle:  # Check if macro was stopped
-                                print("Macro stopped during 60-second wait")
-                                self.auto_reconnect_in_progress = False
-                                return False
-                            time.sleep(0.1)
-                        
-                        # Step 5: Press backslash key sequence and wait for completion
-                        self.press_backslash_sequence()
-                        # Additional wait to ensure sequence is fully processed
-                        time.sleep(2)
-                    else:
-                        print("Failed to detect Roblox startup, but continuing...")
-                        # Still wait 60 seconds even if detection failed
-                        print("Waiting 60 seconds for Roblox to fully load...")
-                        for i in range(600):  # 60 seconds in 0.1 second intervals
-                            if not self.toggle:  # Check if macro was stopped
-                                print("Macro stopped during 60-second wait")
-                                self.auto_reconnect_in_progress = False
-                                return False
-                            time.sleep(0.1)
-                        self.press_backslash_sequence()
-                        time.sleep(2)
-                else:
-                    print("Private server launch failed, waiting for manual join...")
-                    # Still wait for Roblox detection in case of manual join
-                    if self.wait_for_roblox_and_set_window_mode():
-                        # Send Roblox detected notification
-                        self.send_roblox_detected_notification()
-                        
-                        # Wait 60 seconds for Roblox to fully load
-                        print("Waiting 60 seconds for Roblox to fully load...")
-                        for i in range(600):  # 60 seconds in 0.1 second intervals
-                            if not self.toggle:  # Check if macro was stopped
-                                print("Macro stopped during 60-second wait")
-                                self.auto_reconnect_in_progress = False
-                                return False
-                            time.sleep(0.1)
-                        self.press_backslash_sequence()
-                        time.sleep(2)
-                    else:
-                        print("No Roblox detected, skipping 60-second wait and backslash sequence")
-            else:
-                print("No private server link provided, waiting for manual join...")
-                # Wait for Roblox detection in case of manual join
-                if self.wait_for_roblox_and_set_window_mode():
-                    # Send Roblox detected notification
-                    self.send_roblox_detected_notification()
-                    
-                    # Wait 60 seconds for Roblox to fully load
-                    print("Waiting 60 seconds for Roblox to fully load...")
-                    for i in range(600):  # 60 seconds in 0.1 second intervals
-                        if not self.toggle:  # Check if macro was stopped
-                            print("Macro stopped during 60-second wait")
-                            self.auto_reconnect_in_progress = False
-                            return False
-                        time.sleep(0.1)
-                    self.press_backslash_sequence()
-                    time.sleep(2)
-                else:
-                    print("No Roblox detected, skipping 60-second wait and backslash sequence")
-            
-            # Step 5: Reset timer and continue macro
-            print("Backslash sequence completed, resuming macro...")
-            self.auto_reconnect_timer_start = time.time()
-            self.auto_reconnect_in_progress = False  # Re-enable other macro functions
-            
-            print("Auto reconnect sequence completed")
-            
-            # Send completion webhook
-            self.send_roblox_reconnected_notification()
-            
-            return True
-            
-        except Exception as e:
-            print(f"Error during auto reconnect: {e}")
-            # Send error notification
-            self.send_error_notification("Auto Reconnect Error", str(e))
-            # Reset flags anyway to prevent being stuck
-            self.auto_reconnect_in_progress = False
-            self.auto_reconnect_timer_start = time.time()
-            return False
+        """Perform the auto reconnect sequence - delegated to manager"""
+        return self.auto_reconnect_manager.perform_auto_reconnect(lambda: self.toggle)
 
-    def close_roblox_instances(self):
-        """Close all Roblox instances"""
-        try:
-            import subprocess
-            
-            # First try using taskkill for immediate termination
-            try:
-                # Kill RobloxPlayerBeta.exe (the main game client)
-                result1 = subprocess.run(['taskkill', '/f', '/im', 'RobloxPlayerBeta.exe'], 
-                                       capture_output=True, text=True, check=False)
-                if result1.returncode == 0:
-                    print("Successfully killed RobloxPlayerBeta.exe")
-                else:
-                    print("RobloxPlayerBeta.exe not found or already closed")
-                
-                # Kill RobloxStudioBeta.exe (just in case Studio is running)
-                result2 = subprocess.run(['taskkill', '/f', '/im', 'RobloxStudioBeta.exe'], 
-                                       capture_output=True, text=True, check=False)
-                if result2.returncode == 0:
-                    print("Successfully killed RobloxStudioBeta.exe")
-                
-                # Kill any Roblox browser processes
-                result3 = subprocess.run(['taskkill', '/f', '/im', 'Roblox.exe'], 
-                                       capture_output=True, text=True, check=False)
-                if result3.returncode == 0:
-                    print("Successfully killed Roblox.exe")
-                    
-            except Exception as e:
-                print(f"Error using taskkill: {e}")
-            
-            # Also try using win32gui if available for more thorough cleanup
-            if WIN32_AVAILABLE:
-                try:
-                    import win32api
-                    import win32con
-                    import win32gui
-                    
-                    def enum_windows_callback(hwnd, windows):
-                        if win32gui.IsWindowVisible(hwnd):
-                            window_text = win32gui.GetWindowText(hwnd)
-                            if "Roblox" in window_text or "roblox" in window_text.lower():
-                                windows.append((hwnd, window_text))
-                        return True
-
-                    windows = []
-                    win32gui.EnumWindows(enum_windows_callback, windows)
-                    
-                    for hwnd, window_text in windows:
-                        try:
-                            win32gui.PostMessage(hwnd, win32con.WM_CLOSE, 0, 0)
-                            print(f"Sent close message to window: {window_text}")
-                        except Exception as e:
-                            print(f"Failed to close window {hwnd} ({window_text}): {e}")
-                    
-                    if windows:
-                        print(f"Attempted to close {len(windows)} Roblox windows via win32gui")
-                        
-                except Exception as e:
-                    print(f"Error using win32gui: {e}")
-                    
-            print("Roblox close sequence completed")
-                    
-        except Exception as e:
-            print(f"Error closing Roblox instances: {e}")
-
-    def launch_private_server(self):
-        """Launch Roblox private server using roblox:// protocol"""
-        try:
-            if not self.roblox_private_server_link.strip():
-                print("No private server link provided")
-                return False
-            
-            import subprocess
-            import urllib.parse
-            import os
-            
-            link = self.roblox_private_server_link.strip()
-            
-            # Determine if this is already a roblox:// protocol URL or needs conversion
-            if link.startswith("roblox://"):
-                # Direct roblox:// protocol URL - use as-is
-                roblox_url = link
-                
-            elif "roblox.com/games/" in link:
-                # Convert https://www.roblox.com link to roblox:// protocol
-                try:
-                    # Parse the URL to extract components
-                    # Extract game ID
-                    game_part = link.split("games/")[1]
-                    game_id = game_part.split("/")[0].split("?")[0]
-                    
-                    # Extract private server code if present
-                    if "privateServerLinkCode=" in link:
-                        private_code = link.split("privateServerLinkCode=")[1].split("&")[0]
-                        roblox_url = f"roblox://placeId={game_id}&linkCode={private_code}"
-                    else:
-                        roblox_url = f"roblox://placeId={game_id}"
-                    
-                except Exception as e:
-                    return False
-            else:
-                return False
-            
-            # Try multiple launch methods with the roblox:// URL
-            
-            # Method 1: os.system with proper escaping (most reliable for Windows)
-            try:
-                escaped_url = f'"{roblox_url}"'
-                command = f'start "" {escaped_url}'
-                result = os.system(command)
-                if result == 0:
-                    return True
-            except Exception as e:
-                pass
-            
-            # Method 2: PowerShell Start-Process
-            try:
-                powershell_cmd = f'Start-Process "{roblox_url}"'
-                result = subprocess.run(['powershell', '-Command', powershell_cmd], 
-                                      capture_output=True, text=True, timeout=10)
-                if result.returncode == 0:
-                    return True
-            except Exception as e:
-                pass
-            
-            # Method 3: webbrowser module as last resort
-            try:
-                import webbrowser
-                webbrowser.open(roblox_url)
-                return True
-            except Exception as e:
-                pass
-            
-            return False
-            
-        except Exception as e:
-            print(f"Error launching private server: {e}")
-            return False
-
-    def press_backslash_sequence(self):
-        """Press backslash, enter, backslash sequence"""
-        try:
-            # Focus RobloxPlayerBeta.exe before sending the sequence
-            self.focus_roblox_window()
-            time.sleep(0.5)  # Small delay to ensure window is focused
-            
-            # Press backslash
-            autoit.send("\\")
-            time.sleep(1.2)  # Slightly longer delay to ensure input is registered
-            
-            # Press enter
-            autoit.send("{ENTER}")
-            time.sleep(1.2)  # Slightly longer delay to ensure input is registered
-            
-            # Press backslash again
-            autoit.send("\\")
-            time.sleep(1.2)  # Slightly longer delay to ensure input is registered
-            
-        except Exception as e:
-            # Try alternative method if autoit fails
-            try:
-                # Also try to focus with alternative method
-                self.focus_roblox_window()
-                time.sleep(0.5)
-                
-                import keyboard
-                keyboard.send("\\")
-                time.sleep(1.2)
-                keyboard.send("enter")
-                time.sleep(1.2)
-                keyboard.send("\\")
-                time.sleep(1.2)
-            except Exception as e2:
-                pass
-
-    def focus_roblox_window(self):
-        """Focus RobloxPlayerBeta.exe window"""
-        try:
-            if WIN32_AVAILABLE:
-                import win32gui
-                
-                def enum_windows_callback(hwnd, windows):
-                    if win32gui.IsWindowVisible(hwnd):
-                        window_text = win32gui.GetWindowText(hwnd)
-                        if "Roblox" in window_text:
-                            windows.append(hwnd)
-                    return True
-
-                windows = []
-                win32gui.EnumWindows(enum_windows_callback, windows)
-                if windows:
-                    win32gui.SetForegroundWindow(windows[0])
-                    print("Focused RobloxPlayerBeta.exe window")
-                    return True
-                else:
-                    print("No Roblox window found to focus")
-                    return False
-            else:
-                print("Win32 not available for window focusing")
-                return False
-        except Exception as e:
-            print(f"Error focusing Roblox window: {e}")
-            return False
-
-    def is_roblox_running(self):
-        """Check if RobloxPlayerBeta.exe is running"""
-        try:
-            import subprocess
-            result = subprocess.run(['tasklist', '/FI', 'IMAGENAME eq RobloxPlayerBeta.exe'], 
-                                  capture_output=True, text=True, check=False)
-            return 'RobloxPlayerBeta.exe' in result.stdout
-        except Exception as e:
-            print(f"Error checking for Roblox process: {e}")
-            return False
-
-    def wait_for_roblox_and_set_window_mode(self):
-        """Wait for RobloxPlayerBeta.exe to start and set the appropriate window mode"""
-        
-        # Wait for Roblox to start (check every 0.5 seconds for up to 60 seconds)
-        for i in range(120):  # 60 seconds total
-            if self.is_roblox_running():
-                # Give Roblox a moment to fully load
-                time.sleep(3)
-                
-                # Set window mode based on user preference
-                if self.roblox_window_mode == "windowed":
-                    self.set_roblox_windowed()
-                else:  # fullscreen
-                    self.set_roblox_fullscreen()
-                
-                return True
-            
-            time.sleep(0.5)
-        
-        print("⚠ Timeout waiting for RobloxPlayerBeta.exe to start")
-        return False
-
-    def set_roblox_windowed(self):
-        """Set Roblox to windowed mode (maximized)"""
-        try:
-            if WIN32_AVAILABLE:
-                import win32gui
-                import win32con
-                
-                def enum_windows_callback(hwnd, windows):
-                    if win32gui.IsWindowVisible(hwnd):
-                        window_text = win32gui.GetWindowText(hwnd)
-                        if "Roblox" in window_text:
-                            windows.append(hwnd)
-                    return True
-
-                windows = []
-                win32gui.EnumWindows(enum_windows_callback, windows)
-                
-                for hwnd in windows:
-                    # Restore window if minimized
-                    win32gui.ShowWindow(hwnd, win32con.SW_RESTORE)
-                    time.sleep(0.5)
-                    # Maximize the window
-                    win32gui.ShowWindow(hwnd, win32con.SW_MAXIMIZE)
-                    return
-        except Exception as e:
-            print(f"Error setting Roblox to windowed mode: {e}")
-
-    def set_roblox_fullscreen(self):
-        """Set Roblox to fullscreen mode"""
-        try:
-            if WIN32_AVAILABLE:
-                import win32gui
-                import win32con
-                
-                def enum_windows_callback(hwnd, windows):
-                    if win32gui.IsWindowVisible(hwnd):
-                        window_text = win32gui.GetWindowText(hwnd)
-                        if "Roblox" in window_text:
-                            windows.append(hwnd)
-                    return True
-
-                windows = []
-                win32gui.EnumWindows(enum_windows_callback, windows)
-                
-                for hwnd in windows:
-                    # Get screen dimensions
-                    screen_width = win32gui.GetSystemMetrics(win32con.SM_CXSCREEN)
-                    screen_height = win32gui.GetSystemMetrics(win32con.SM_CYSCREEN)
-                    
-                    # Set window to fullscreen
-                    win32gui.SetWindowPos(hwnd, win32con.HWND_TOP, 0, 0, 
-                                        screen_width, screen_height, 
-                                        win32con.SWP_SHOWWINDOW)
-                    return
-            else:
-                # Fallback method using autoit key press (F11 for fullscreen)
-                time.sleep(1)
-                autoit.send("{F11}")
-        except Exception as e:
-            print(f"Error setting Roblox to fullscreen mode: {e}")
+    # Auto-reconnect related methods have been moved to reconnect.py module
 
     def mouse_automation_loop(self):
         """Main macro loop with new fishing sequence and auto-sell cycles"""
@@ -1961,7 +1681,9 @@ class MouseAutomation:
             print("Starting new macro sequence...")
             
             while self.running and self.toggle:
-                if not self.toggle:
+                # Check for emergency stop at the beginning of each iteration
+                if self.check_emergency_stop():
+                    print("Emergency stop detected in main loop, exiting...")
                     break
 
                 # Wait if auto reconnect is in progress
@@ -1980,30 +1702,9 @@ class MouseAutomation:
                         print("Auto reconnect failed, continuing with normal macro")
 
                 try:
-                    # Check if all pathing is disabled - simplified mode for users without VIP gamepass
-                    if self.disable_all_pathing:
-                        # Simple fishing mode - no navigation, no auto-sell, just fishing
-                        print("Pathing disabled - Simple fishing mode")
-                        
-                        # Perform single fishing cycle
-                        fish_caught = self.perform_single_fishing_cycle()
-                        
-                        # Check if auto reconnect was triggered during fishing
-                        if fish_caught == "auto_reconnect":
-                            if self.perform_auto_reconnect():
-                                continue
-                            else:
-                                continue
-                        
-                        if fish_caught:
-                            print("Fish caught! (Pathing disabled - no auto-sell)")
-                        
-                        continue  # Skip all the complex macro phases
-                    
                     # Phase 1: Initial Setup (only on first run or after sell cycle)
                     if self.automation_phase == "initialization" or self.automation_phase == "post_sell":
                         old_phase = self.automation_phase
-                        print("Phase: Initial Setup")
                         
                         # Send phase change notification
                         self.send_phase_change_notification(old_phase, "initialization")
@@ -2040,13 +1741,11 @@ class MouseAutomation:
                         # Reset fish count for new cycle
                         self.current_fish_count = 0
                         self.automation_phase = "fishing"
-                        print(f"Setup complete. Starting fishing cycle (target: {self.fish_count_until_auto_sell} fish)")
 
                     # Phase 2: Fishing Loop
                     if self.automation_phase == "fishing":
                         # Check if we should continue fishing or start sell cycle
                         if self.auto_sell_enabled and self.current_fish_count >= self.fish_count_until_auto_sell:
-                            print(f"Fish count target reached ({self.current_fish_count}/{self.fish_count_until_auto_sell})")
                             
                             # Send cycle completion notification
                             self.send_cycle_completion_notification('fishing', self.current_fish_count)
@@ -2055,7 +1754,7 @@ class MouseAutomation:
                             continue
                         elif not self.auto_sell_enabled:
                             # If auto-sell is disabled, just keep fishing forever
-                            print("Auto-sell disabled, continuing fishing...")
+                            pass
                         
                         # Perform single fishing cycle
                         fish_caught = self.perform_single_fishing_cycle()
@@ -2072,11 +1771,9 @@ class MouseAutomation:
                         
                         if fish_caught:
                             self.current_fish_count += 1
-                            print(f"Fish caught! Count: {self.current_fish_count}/{self.fish_count_until_auto_sell}")
 
                     # Phase 3: Pre-Sell Setup (only if auto-sell enabled)
                     elif self.automation_phase == "pre_sell" and self.auto_sell_enabled:
-                        print("Phase: Pre-Sell Setup")
                         
                         # Send auto-sell started notification
                         self.send_auto_sell_started_notification()
@@ -2106,43 +1803,29 @@ class MouseAutomation:
                         
                         # Run shoppath.py
                         if not self.run_external_script("shoppath", delay=2):
-                            print("Failed to run shop path script")
-                            # Continue anyway
+                            pass  # Continue anyway
                         
-                        # Wait 1 second before performing drag up
-                        sleep_result = self.interruptible_sleep(1.0)
-                        if sleep_result == "auto_reconnect":
-                            if self.perform_auto_reconnect():
-                                # Reset automation state after reconnect
-                                self.current_fish_count = 0
-                                self.automation_phase = "initialization"
-                                continue
-                            else:
-                                print("Auto reconnect failed, continuing with normal macro")
-                        elif sleep_result == False:
-                            # Macro was stopped
+                        # Debug: Check automation state before sleep
+                        
+                        # Simple sleep instead of interruptible_sleep to avoid emergency stop issues
+                        time.sleep(1.0)
+                        
+                        # Check if macro was stopped during sleep (final safety check)
+                        if not self.toggle or not self.running:
                             break
                         
-                        # Perform drag up for camera adjustment
+                        # Perform additional camera drag for shop interaction
                         self.perform_drag_up()
                         
-                        # Wait 4 seconds before clicking Sell Fish Shop (with auto reconnect check)
-                        sleep_result = self.interruptible_sleep(4.0)
-                        if sleep_result == "auto_reconnect":
-                            if self.perform_auto_reconnect():
-                                # Reset automation state after reconnect
-                                self.current_fish_count = 0
-                                self.automation_phase = "initialization"
-                                continue
-                            else:
-                                print("Auto reconnect failed, continuing with normal macro")
-                        elif sleep_result == False:
-                            # Macro was stopped
+                        # Wait 4 seconds before clicking Sell Fish Shop
+                        time.sleep(4.0)
+                        
+                        # Check if macro was stopped during wait
+                        if not self.toggle or not self.running:
                             break
                         
                         # Click Sell Fish Shop
                         if not self.click_coordinate('sell_fish_shop', 1.0):
-                            print("Failed to click sell fish shop")
                             continue
                         
                         # Wait 1 second
@@ -2152,17 +1835,21 @@ class MouseAutomation:
 
                     # Phase 4: Selling Loop
                     elif self.automation_phase == "selling":
-                        print(f"Phase: Selling Loop (selling {self.fish_count_until_auto_sell} fish)")
+                        
+                        # Determine how many times to sell based on configuration
+                        if self.auto_sell_configuration == "Sell All (Recommended)":
+                            sell_count = 22  # Always sell 22 times for Sell All mode
+                        else:  # Legacy mode
+                            sell_count = self.fish_count_until_auto_sell
                         
                         # Send phase change notification
                         self.send_phase_change_notification("pre_sell", "selling")
                         
-                        # Perform selling loop the same number of times as fish caught
-                        for i in range(self.fish_count_until_auto_sell):
-                            if not self.toggle:
+                        # Perform selling loop based on configuration
+                        for i in range(sell_count):
+                            # Check for emergency stop before each sell operation
+                            if self.check_emergency_stop():
                                 break
-                            
-                            print(f"Selling fish {i+1}/{self.fish_count_until_auto_sell}")
                             
                             # Perform auto sell sequence using existing auto sell manager
                             if hasattr(self, 'auto_sell_manager'):
@@ -2170,15 +1857,11 @@ class MouseAutomation:
                                 self.auto_sell_manager.set_first_loop(False)
                                 self.auto_sell_manager.update_coordinates(self.coordinates)
                                 
-                                print(f"Starting auto sell sequence for fish {i+1}")
                                 # Force manual sell to bypass the should_perform_auto_sell check
                                 if not self.auto_sell_manager.perform_manual_sell():
-                                    print(f"Manual sell sequence failed for fish {i+1}")
                                     # Continue with next fish
-                                else:
-                                    print(f"Auto sell sequence completed for fish {i+1}")
+                                    pass
                             else:
-                                print("Auto sell manager not available")
                                 break
                             
                             # Small delay between sells
@@ -2189,20 +1872,19 @@ class MouseAutomation:
                         
                         # Click Exit Fish Shop
                         if not self.click_coordinate('exit_fish_shop', 1.0):
-                            print("Failed to click exit fish shop")
+                            pass
                         
                         # Wait 1 second
                         time.sleep(1.0)
                         
                         # Send sell cycle completion notification
-                        self.send_cycle_completion_notification('selling', self.fish_count_until_auto_sell)
+                        self.send_cycle_completion_notification('selling', sell_count)
                         
                         # Send back to fishing notification
                         self.send_back_to_fishing_notification()
                         
                         # Reset for next cycle
                         self.automation_phase = "initialization"
-                        print("Sell cycle complete, starting new fishing cycle...")
 
                 except Exception as e:
                     print(f"Error in macro phase '{self.automation_phase}': {e}")
@@ -2252,7 +1934,9 @@ class MouseAutomation:
             white_diamond_start_time = time.time()
 
             while True:
-                if not self.toggle:
+                # Check for emergency stop during white diamond wait
+                if self.check_emergency_stop():
+                    print("Emergency stop detected during white diamond wait")
                     return False
 
                 # Check for auto reconnect during white diamond wait
@@ -2288,10 +1972,14 @@ class MouseAutomation:
             # Perform reel-in mini-game
             start_time = time.time()
             loop_count = 0
+            extra_click_performed = False  # Flag to track if extra click has been done
 
             while True:
-                if not self.toggle:
+                # Check for emergency stop during reeling
+                if self.check_emergency_stop():
+                    print("Emergency stop detected during reeling")
                     break
+                    
                 if (time.time() - start_time) > 9:
                     break
 
@@ -2310,9 +1998,15 @@ class MouseAutomation:
                 search_area = self.coordinates['reel_bar']
                 found_pos = self.pixel_search_color(*search_area, bar_color, tolerance=5)
                 
-                # Simple logic: If color found, do nothing. If not found, click.
+                # Simple logic: If color found and extra click not done yet, click once then stop. If not found, click.
                 if found_pos is None:
                     autoit.mouse_click("left")
+                else:
+                    # Color detected - click one extra time before stopping (only once)
+                    if not extra_click_performed:
+                        autoit.mouse_click("left")
+                        extra_click_performed = True
+                    # After extra click is done, do nothing (stop clicking)
 
             time.sleep(0.5)
 
@@ -2355,7 +2049,7 @@ class MouseAutomation:
             self.start_time = time.time()
             
             # Initialize auto reconnect timer
-            self.auto_reconnect_timer_start = time.time()
+            self.auto_reconnect_manager.start_timer()
             
             # Reset macro state for new sequence
             self.current_fish_count = 0
@@ -2387,11 +2081,13 @@ class MouseAutomation:
             self.send_macro_started_notification()
 
     def stop_automation(self):
-        """Stop macro with improved thread handling and error recovery"""
-        if not self.running:
-            return
-
-        print("Stop macro requested...")
+        """Stop macro with immediate stop and improved thread handling"""
+        
+        # Check if we're in a critical phase and provide context
+        if hasattr(self, 'external_script_running') and self.external_script_running:
+            print("WARNING: External script is currently running. Stop will interrupt navigation.")
+        
+        print("STOP ACTIVATED - Stopping macro...")
 
         # Set stop flags immediately
         self.toggle = False
@@ -2429,7 +2125,7 @@ class MouseAutomation:
             except Exception as e:
                 print(f"Error during thread cleanup: {e}")
 
-        print("Stop automation completed")
+        print("Stop completed")
 
 class CalibrationOverlay(QWidget):
     coordinate_selected = pyqtSignal(int, int)
@@ -2915,9 +2611,8 @@ class AdvancedCalibrationWindow(QMainWindow):
                 return
             else:
                 # Complete reel bar calibration with bottom-right coordinates
-                self.automation.coordinates['reel_bar'] = (
-                    self.reel_bar_coords[0], self.reel_bar_coords[1], x, y
-                )
+                new_coords = (self.reel_bar_coords[0], self.reel_bar_coords[1], x, y)
+                self.parent_window.update_coordinate_and_ui('reel_bar', new_coords)
         elif self.current_calibration == 'fish_caught_desc':
             if self.fish_caught_desc_step == 1:
                 # Store top-left coordinates
@@ -2938,13 +2633,14 @@ class AdvancedCalibrationWindow(QMainWindow):
             else:
                 # Complete fish caught description calibration with bottom-right coordinates
                 self.fish_caught_desc_bottom_right = (x, y)
-                self.automation.coordinates['fish_caught_desc'] = (
+                new_coords = (
                     self.fish_caught_desc_top_left[0], self.fish_caught_desc_top_left[1],
                     self.fish_caught_desc_bottom_right[0], self.fish_caught_desc_bottom_right[1]
                 )
+                self.parent_window.update_coordinate_and_ui('fish_caught_desc', new_coords)
         else:
             # Regular coordinate calibration
-            self.automation.coordinates[self.current_calibration] = (x, y)
+            self.parent_window.update_coordinate_and_ui(self.current_calibration, (x, y))
 
         # Close overlay
         self.overlay.close()
@@ -3056,177 +2752,65 @@ class CalibrationUI(QMainWindow):
         self.ui_update_timer.timeout.connect(self.update_auto_reconnect_display)
         self.ui_update_timer.start(1000)  # Update every second
 
-        # Premade calibrations using original coordinates
-        self.premade_calibrations = {
-            "1024x768 | Windowed | 100% Scale": {
-                'fish_button': (424, 559),
-                'white_diamond': (674, 561),
-                'reel_bar': (360, 504, 665, 522),
-                'completed_border': (663, 560),
-                'close_button': (640, 206),
-                'fish_caught_desc': (300, 350, 600, 450),
-                'first_item': (442, 276),
-                'sell_button': (316, 542),
-                'confirm_button': (443, 407),
-                'mouse_idle_position': (529, 162),
-                'shaded_area': (505, 506),
-                'sell_fish_shop': (400, 300),  # Placeholder coordinates
-                'collection_button': (450, 350),  # Placeholder coordinates
-                'exit_collections': (500, 400),  # Placeholder coordinates
-                'exit_fish_shop': (550, 450)  # Placeholder coordinates
-            },
-            "1920x1080 | Windowed | 100% Scale": {
-                'fish_button': (851, 802),
-                'white_diamond': (1176, 805),
-                'reel_bar': (757, 728, 1163, 750),
-                'completed_border': (1133, 744),
-                'close_button': (1108, 337),
-                'fish_caught_desc': (700, 540, 1035, 685),
-                'first_item': (830, 409),
-                'sell_button': (588, 775),
-                'confirm_button': (797, 613),
-                'mouse_idle_position': (999, 190),
-                'shaded_area': (951, 731),
-                'sell_fish_shop': (900, 600),  # Placeholder coordinates
-                'collection_button': (950, 650),  # Placeholder coordinates
-                'exit_collections': (1000, 700),  # Placeholder coordinates
-                'exit_fish_shop': (1050, 750)  # Placeholder coordinates
-            },
-            "1920x1080 | Windowed | 125% Scale": {
-                'fish_button': (833, 788),
-                'white_diamond': (1201, 792),
-                'reel_bar': (733, 707, 1187, 732),
-                'completed_border': (1157, 772),
-                'close_button': (1127, 307),
-                'fish_caught_desc': (700, 520, 1035, 665),
-                'first_item': (823, 403),
-                'sell_button': (587, 767),
-                'confirm_button': (833, 591),
-                'mouse_idle_position': (996, 203),
-                'shaded_area': (950, 712)
-            },
-            "1920x1080 | Windowed | 150% Scale": {
-                'fish_button': (819, 777),
-                'white_diamond': (1225, 780),
-                'reel_bar': (709, 684, 1210, 714),
-                'completed_border': (1180, 796),
-                'close_button': (1147, 277),
-                'fish_caught_desc': (700, 500, 1035, 645),
-                'first_item': (820, 402),
-                'sell_button': (589, 760),
-                'confirm_button': (801, 603),
-                'mouse_idle_position': (970, 220),
-                'shaded_area': (945, 691)
-            },
-            "3840x2160 | Windowed | 100% Scale": {
-                'fish_button': (1751, 1648),
-                'white_diamond': (2253, 1652),
-                'reel_bar': (1607, 1535, 2233, 1568),
-                'completed_border': (2174, 1384),
-                'close_button': (2136, 789),
-                'fish_caught_desc': (1400, 1080, 2070, 1370),
-                'first_item': (1650, 819),
-                'sell_button': (1168, 1588),
-                'confirm_button': (1595, 1238),
-                'mouse_idle_position': (1952, 452),
-                'shaded_area': (1904, 1540)
-            },
-            "3840x2160 | Windowed | 125% Scale": {
-                'fish_button': (1727, 1633),
-                'white_diamond': (2277, 1640),
-                'reel_bar': (1582, 1515, 2257, 1552),
-                'completed_border': (2197, 1412),
-                'close_button': (2156, 758),
-                'fish_caught_desc': (1400, 1060, 2070, 1350),
-                'first_item': (1667, 816),
-                'sell_button': (1172, 1575),
-                'confirm_button': (1595, 1235),
-                'mouse_idle_position': (1990, 473),
-                'shaded_area': (1898, 1518)
-            },
-            "3840x2160 | Windowed | 150% Scale": {
-                'fish_button': (1713, 1621),
-                'white_diamond': (2302, 1627),
-                'reel_bar': (1560, 1492, 2278, 1534),
-                'completed_border': (2220, 1435),
-                'close_button': (2176, 727),
-                'fish_caught_desc': (1400, 1040, 2070, 1330),
-                'first_item': (1654, 817),
-                'sell_button': (1180, 1567),
-                'confirm_button': (1600, 1204),
-                'mouse_idle_position': (1975, 469),
-                'shaded_area': (1891, 1498)
-            },
-            "3840x2160 | Windowed | 200% Scale": {
-                'fish_button': (1704, 1596),
-                'white_diamond': (2352, 1604),
-                'reel_bar': (1514, 1450, 2328, 1498),
-                'completed_border': (2268, 1488),
-                'close_button': (2216, 670),
-                'fish_caught_desc': (1400, 1020, 2070, 1310),
-                'first_item': (1658, 818),
-                'sell_button': (1178, 1546),
-                'confirm_button': (1600, 1224),
-                'mouse_idle_position': (1938, 464),
-                'shaded_area': (1898, 1460)
-            },
-            # Legacy support for existing configurations
-            "1920x1080 | Windowed | 100% Scale (Legacy)": {
-                'fish_button': (851, 801),
-                'white_diamond': (1177, 803),
-                'reel_bar': (758, 729, 1159, 744),
-                'completed_border': (1135, 745),
-                'close_button': (1108, 336),
-                'fish_caught_desc': (700, 540, 1035, 685),
-                'first_item': (830, 407),
-                'sell_button': (592, 774),
-                'confirm_button': (789, 615),
-                'mouse_idle_position': (975, 210),
-                'shaded_area': (947, 732)
-            },
-            "1920x1080 | Full Screen | 100% Scale": {
-                'fish_button': (852, 837),
-                'white_diamond': (1176, 837),
-                'reel_bar': (757, 762, 1162, 781),
-                'completed_border': (1139, 763),
-                'close_button': (1113, 344),
-                'fish_caught_desc': (700, 540, 1035, 685),
-                'first_item': (834, 409),
-                'sell_button': (590, 805),
-                'confirm_button': (807, 629),
-                'mouse_idle_position': (1365, 805),
-                'shaded_area': (946, 765)
-            },
-            "2560x1440 | Windowed | 100% Scale": {
-                'fish_button': (1149, 1089),
-                'white_diamond': (1536, 1093),
-                'reel_bar': (1042, 1000, 1515, 1026),
-                'completed_border': (1479, 959),
-                'close_button': (1455, 491),
-                'fish_caught_desc': (933, 720, 1378, 913),
-                'first_item': (1101, 546),
-                'sell_button': (779, 1054),
-                'confirm_button': (1054, 827),
-                'mouse_idle_position': (1281, 1264),
-                'shaded_area': (1271, 1008)
-            },
-            "1366x768 | Full Screen | 100% Scale": {
-                'fish_button': (594, 588),
-                'white_diamond': (866, 592),
-                'reel_bar': (513, 529, 855, 545),
-                'completed_border': (839, 577),
-                'close_button': (817, 211),
-                'fish_caught_desc': (497, 384, 735, 486),
-                'first_item': (591, 287),
-                'sell_button': (420, 570),
-                'confirm_button': (567, 443),
-                'mouse_idle_position': (1115, 381),
-                'shaded_area': (664, 531)
-            }
-        }
+        # Refresh calibrations on app launch and load dynamic calibrations from calibration manager
+        try:
+            # Force refresh calibrations from server on startup
+            success, message, calibration_data = self.automation.calibration_manager.update_calibrations(force_update=True)
+            if success:
+                print("Calibrations downloaded")
+            else:
+                print(f"Calibrations failed to download, server might be down: {message}")
+        except Exception as e:
+            print(f"Warning: Error refreshing calibrations on launch: {e}")
+        
+        self.load_dynamic_calibrations()
 
         self.setup_ui()
         self.apply_clean_theme()
+
+    def load_dynamic_calibrations(self):
+        """Load calibrations from calibration manager (silently, uses cached data)"""
+        try:
+            # Get available calibrations from the calibration manager (uses cache, no spam)
+            calibration_names = self.automation.calibration_manager.get_available_calibrations()
+            self.premade_calibrations = {}
+            
+            # Load each calibration
+            for name in calibration_names:
+                coordinates = self.automation.calibration_manager.get_calibration_by_name(name)
+                if coordinates:
+                    # Convert list coordinates to tuples for compatibility
+                    converted_coords = {}
+                    for coord_name, coord_data in coordinates.items():
+                        if isinstance(coord_data, list):
+                            converted_coords[coord_name] = tuple(coord_data)
+                        else:
+                            converted_coords[coord_name] = coord_data
+                    self.premade_calibrations[name] = converted_coords
+            
+            # Only print if we actually loaded calibrations (and not using defaults)
+            # Silent loading - no need to announce readiness
+            pass
+            
+        except Exception as e:
+            print(f"Error loading dynamic calibrations: {e}")
+            # Fallback to empty dict - the calibration manager has defaults built-in
+            self.premade_calibrations = {}
+
+    def update_coordinate_and_ui(self, coord_name, coord_value):
+        """Update coordinate value and refresh UI display"""
+        if coord_name in self.automation.coordinates:
+            self.automation.coordinates[coord_name] = coord_value
+            
+            # Update UI label if it exists in main coordinates
+            if hasattr(self, 'coord_labels_widgets') and coord_name in self.coord_labels_widgets:
+                coord_label = self.coord_labels_widgets[coord_name]
+                coord_label.setText(self.get_coord_text(coord_name))
+            
+            # Update UI label if it exists in shop coordinates
+            if hasattr(self, 'shop_coord_labels') and coord_name in self.shop_coord_labels:
+                coord_label = self.shop_coord_labels[coord_name]
+                coord_label.setText(self.get_shop_coord_text(coord_name))
 
     def on_webhook_url_changed(self, text):
         self.automation.webhook_url = text
@@ -3545,12 +3129,16 @@ class CalibrationUI(QMainWindow):
             self.automation.auto_sell_manager.set_auto_sell_enabled(self.automation.auto_sell_enabled)
         self.automation.save_calibration()
 
+    def update_auto_sell_configuration(self, text):
+        self.automation.auto_sell_configuration = text
+        self.automation.save_calibration()
+
     def update_fish_count_until_auto_sell(self, value):
         self.automation.fish_count_until_auto_sell = value
         self.automation.save_calibration()
 
-    def update_disable_all_pathing(self, state):
-        self.automation.disable_all_pathing = state == Qt.CheckState.Checked.value
+    def update_vip_paths(self, state):
+        self.automation.use_vip_paths = state == Qt.CheckState.Checked.value
         self.automation.save_calibration()
 
     def update_auto_reconnect_enabled(self, state):
@@ -3558,12 +3146,75 @@ class CalibrationUI(QMainWindow):
         self.automation.save_calibration()
 
     def update_auto_reconnect_time(self, value):
-        self.automation.auto_reconnect_time = value
+        # Convert minutes to seconds before saving
+        self.automation.auto_reconnect_time = value * 60
         self.automation.save_calibration()
 
     def update_window_mode(self, text):
         self.automation.roblox_window_mode = "windowed" if text == "Windowed" else "fullscreen"
         self.automation.save_calibration()
+
+    def update_backslash_sequence_delay(self, value):
+        self.automation.backslash_sequence_delay = value
+        self.automation.save_calibration()
+
+    def test_auto_reconnect(self):
+        """Handle the test auto reconnect button click"""
+        try:
+            # Disable the button during test
+            self.test_reconnect_btn.setEnabled(False)
+            self.test_reconnect_btn.setText("Testing...")
+            
+            # Show message to user
+            from PyQt6.QtWidgets import QMessageBox
+            reply = QMessageBox.question(
+                self, 
+                "Test Auto Reconnect", 
+                "This will immediately trigger the auto reconnect sequence.\n\n"
+                "• Roblox will be closed\n"
+                "• Private server will be launched (if link provided)\n"
+                "• Full reconnect sequence will execute\n\n"
+                "Continue?",
+                QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+                QMessageBox.StandardButton.No
+            )
+            
+            if reply == QMessageBox.StandardButton.Yes:
+                # Stop macro if running
+                if self.automation.running:
+                    self.automation.stop_automation()
+                    
+                # Execute test reconnect in a separate thread to avoid blocking UI
+                import threading
+                def run_test():
+                    try:
+                        success = self.automation.auto_reconnect_manager.test_auto_reconnect()
+                        if success:
+                            print("Test auto reconnect completed successfully")
+                        else:
+                            print("Test auto reconnect failed")
+                    except Exception as e:
+                        print(f"Error during test auto reconnect: {e}")
+                    finally:
+                        # Re-enable button using QTimer to ensure thread safety
+                        def re_enable_button():
+                            self.test_reconnect_btn.setEnabled(True)
+                            self.test_reconnect_btn.setText("Test Auto Reconnect")
+                        
+                        QTimer.singleShot(1000, re_enable_button)
+                
+                test_thread = threading.Thread(target=run_test, daemon=True)
+                test_thread.start()
+            else:
+                # Re-enable button if cancelled
+                self.test_reconnect_btn.setEnabled(True)
+                self.test_reconnect_btn.setText("Test Auto Reconnect")
+                
+        except Exception as e:
+            print(f"Error in test_auto_reconnect: {e}")
+            # Re-enable button on error
+            self.test_reconnect_btn.setEnabled(True)
+            self.test_reconnect_btn.setText("Test Auto Reconnect")
 
     def validate_private_server_link(self, link):
         """Validate the private server link and return validation result"""
@@ -3705,18 +3356,19 @@ Click OK to acknowledge these instructions."""
             self.timer_label.setText("Time until reconnect: --:--")
             return
             
-        # Convert seconds to minutes and seconds
-        minutes = int(remaining_seconds // 60)
-        seconds = int(remaining_seconds % 60)
+        # Convert seconds to minutes for display
+        total_minutes = remaining_seconds / 60
         
         if remaining_seconds <= 0:
             self.timer_label.setText("Time until reconnect: Reconnecting...")
             self.timer_label.setStyleSheet("color: #dc3545; font-size: 11px; font-weight: 500;")  # Red
-        elif remaining_seconds <= 60:  # Less than 1 minute
-            self.timer_label.setText(f"Time until reconnect: {seconds}s")
+        elif remaining_seconds <= 60:  # Less than 1 minute, show in seconds
+            seconds = int(remaining_seconds)
+            self.timer_label.setText(f"Time until reconnect: {seconds} sec")
             self.timer_label.setStyleSheet("color: #fd7e14; font-size: 11px; font-weight: 500;")  # Orange
         else:
-            self.timer_label.setText(f"Time until reconnect: {minutes}:{seconds:02d}")
+            # Show in minutes with one decimal place
+            self.timer_label.setText(f"Time until reconnect: {total_minutes:.1f} min")
             self.timer_label.setStyleSheet("color: #4a9eff; font-size: 11px; font-weight: 500;")  # Blue
 
     def update_mouse_delay_enabled(self, state):
@@ -3916,7 +3568,7 @@ Click OK to acknowledge these instructions."""
     def create_shop_calibration_rows(self, parent_layout):
         """Create calibration rows for shop and collection coordinates"""
         shop_coords = {
-            'sell_button': 'Sell Button',
+            'sell_button': 'Sell or Sell All Button',
             'sell_fish_shop': 'Sell Fish Shop',
             'collection_button': 'Collection Button', 
             'exit_collections': 'Exit Collections',
@@ -4407,6 +4059,7 @@ Click OK to acknowledge these instructions."""
 
         # Create tabs
         self.create_controls_tab()
+        self.create_auto_reconnect_tab()
         self.create_calibrations_tab()
         self.create_webhook_tab()
         self.create_settings_tab()
@@ -4453,27 +4106,6 @@ Click OK to acknowledge these instructions."""
         scroll_layout.setSpacing(15)
         scroll_layout.setContentsMargins(10, 10, 10, 10)
 
-        # VIP Gamepass Notice Section
-        vip_notice_group = QGroupBox("Important Notice")
-        vip_notice_layout = QVBoxLayout(vip_notice_group)
-        vip_notice_layout.setSpacing(8)
-        vip_notice_layout.setContentsMargins(12, 15, 12, 12)
-
-        vip_notice_label = QLabel("You need the \"VIP\" Gamepass WalkSpeed boost for Auto Reconnect and Auto Sell features to work properly.")
-        vip_notice_label.setWordWrap(True)
-        vip_notice_label.setStyleSheet("""
-            QLabel {
-                color: #856404;
-                background-color: #fff3cd;
-                border: 1px solid #ffeaa7;
-                border-radius: 4px;
-                padding: 10px;
-                font-size: 12px;
-                font-weight: 500;
-            }
-        """)
-        vip_notice_layout.addWidget(vip_notice_label)
-        scroll_layout.addWidget(vip_notice_group)
 
         # Control Section
         control_group = QGroupBox("Macro Controls")
@@ -4545,8 +4177,72 @@ Click OK to acknowledge these instructions."""
         control_layout.addLayout(button_layout)
         scroll_layout.addWidget(control_group)
 
-        # Auto Reconnect Section
-        auto_reconnect_group = QGroupBox("Auto Reconnect")
+        # Important Notice Section
+        notice_group = QGroupBox("Important Setup Notice")
+        notice_layout = QVBoxLayout(notice_group)
+        notice_layout.setContentsMargins(12, 15, 12, 12)
+        notice_layout.setSpacing(8)
+
+        # Main notice text
+        notice_text = QLabel("""⚠️ BEFORE STARTING THE MACRO:
+
+1. Configure Calibrations: Go to the 'Calibrations' tab and apply the correct calibration for your screen resolution and scale. Without proper calibrations, the macro will not work correctly. By defult, the macro is calibrated for the SELL ALL mode, in order to use the Legacy Sell mode you must calibrate the Sell Button to the normal sell button.
+
+2. Adjust Settings: Visit the 'Settings' tab to configure auto-sell behavior and other preferences according to your needs.
+
+Auto-Sell Modes Explained:
+• Legacy Mode: Sells the same number of times as fish caught (e.g., catch 10 fish → sell 10 times)
+• Sell All Mode (Recommended): Always sells exactly 22 times regardless of fish count
+
+✅ Sell All mode is recommended because it significantly reduces the time spent selling fish, making the macro more efficient overall.""")
+        
+        notice_text.setWordWrap(True)
+        notice_text.setStyleSheet("""
+            QLabel {
+                color: #f8d7da;
+                background-color: #2c1b1e;
+                border: 2px solid #721c24;
+                border-radius: 6px;
+                padding: 12px;
+                font-size: 11px;
+                line-height: 1.4;
+                margin: 2px;
+            }
+        """)
+        notice_layout.addWidget(notice_text)
+        
+        scroll_layout.addWidget(notice_group)
+
+        # Add stretch to push content to top
+        scroll_layout.addStretch()
+
+        scroll_area.setWidget(scroll_widget)
+        
+        # Set layout for controls tab
+        tab_layout = QVBoxLayout(controls_tab)
+        tab_layout.setContentsMargins(0, 0, 0, 0)
+        tab_layout.addWidget(scroll_area)
+
+    def create_auto_reconnect_tab(self):
+        """Create the Auto Reconnect tab with all auto-reconnect settings"""
+        auto_reconnect_tab = QWidget()
+        self.tab_widget.addTab(auto_reconnect_tab, "Auto Reconnect")
+        
+        # Add scroll area to the auto-reconnect tab
+        scroll_area = QScrollArea()
+        scroll_area.setWidgetResizable(True)
+        scroll_area.setVerticalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAsNeeded)
+        scroll_area.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+
+        scroll_widget = QWidget()
+        scroll_layout = QVBoxLayout(scroll_widget)
+        scroll_layout.setSpacing(15)
+        scroll_layout.setContentsMargins(10, 10, 10, 10)
+
+        # Removed VIP Gamepass Important Notice from Auto Reconnect tab
+
+        # Auto Reconnect Settings Group
+        auto_reconnect_group = QGroupBox("Auto Reconnect Settings")
         auto_reconnect_layout = QVBoxLayout(auto_reconnect_group)
         auto_reconnect_layout.setSpacing(8)
         auto_reconnect_layout.setContentsMargins(12, 15, 12, 12)
@@ -4594,8 +4290,8 @@ Click OK to acknowledge these instructions."""
         time_layout.addWidget(time_label)
 
         self.auto_reconnect_time_spinbox = QSpinBox()
-        self.auto_reconnect_time_spinbox.setRange(1, 1440)  # 1 minute to 24 hours
-        self.auto_reconnect_time_spinbox.setValue(self.automation.auto_reconnect_time)
+        self.auto_reconnect_time_spinbox.setRange(1, 1440)  # 1 minute to 1440 minutes (24 hours)
+        self.auto_reconnect_time_spinbox.setValue(self.automation.auto_reconnect_time // 60)  # Convert seconds to minutes for display
         self.auto_reconnect_time_spinbox.setSuffix(" min")
         self.auto_reconnect_time_spinbox.valueChanged.connect(self.update_auto_reconnect_time)
         self.auto_reconnect_time_spinbox.setStyleSheet("""
@@ -4700,6 +4396,46 @@ Click OK to acknowledge these instructions."""
         window_mode_layout.addStretch()
         auto_reconnect_layout.addLayout(window_mode_layout)
 
+        # Backslash sequence delay setting
+        delay_layout = QHBoxLayout()
+        delay_layout.setSpacing(10)
+
+        delay_label = QLabel("Key sequence delay (seconds):")
+        delay_label.setStyleSheet("color: #e0e0e0; font-size: 11px;")
+        delay_layout.addWidget(delay_label)
+
+        self.backslash_delay_spinbox = QSpinBox()
+        self.backslash_delay_spinbox.setRange(60, 300)  # 60 seconds to 5 minutes
+        self.backslash_delay_spinbox.setValue(int(self.automation.backslash_sequence_delay))
+        self.backslash_delay_spinbox.setSuffix(" sec")
+        self.backslash_delay_spinbox.valueChanged.connect(self.update_backslash_sequence_delay)
+        self.backslash_delay_spinbox.setStyleSheet("""
+            QSpinBox {
+                background-color: #3d3d3d;
+                border: 1px solid #555555;
+                border-radius: 4px;
+                padding: 4px 8px;
+                color: #e0e0e0;
+                font-size: 11px;
+                min-width: 100px;
+            }
+            QSpinBox:focus {
+                border-color: #4a9eff;
+            }
+            QSpinBox::up-button, QSpinBox::down-button {
+                background-color: #404040;
+                border: 1px solid #555555;
+                width: 16px;
+                border-radius: 2px;
+            }
+            QSpinBox::up-button:hover, QSpinBox::down-button:hover {
+                background-color: #4a9eff;
+            }
+        """)
+        delay_layout.addWidget(self.backslash_delay_spinbox)
+        delay_layout.addStretch()
+        auto_reconnect_layout.addLayout(delay_layout)
+
         # Timer display
         timer_layout = QHBoxLayout()
         timer_layout.setSpacing(10)
@@ -4710,8 +4446,40 @@ Click OK to acknowledge these instructions."""
         timer_layout.addStretch()
         auto_reconnect_layout.addLayout(timer_layout)
 
+        # Test auto reconnect button
+        test_reconnect_layout = QHBoxLayout()
+        test_reconnect_layout.setSpacing(10)
+
+        self.test_reconnect_btn = QPushButton("Test Auto Reconnect")
+        self.test_reconnect_btn.clicked.connect(self.test_auto_reconnect)
+        self.test_reconnect_btn.setStyleSheet("""
+            QPushButton {
+                background-color: #17a2b8;
+                color: white;
+                font-weight: 500;
+                padding: 8px 16px;
+                font-size: 11px;
+                border: none;
+                border-radius: 5px;
+                min-width: 140px;
+            }
+            QPushButton:hover {
+                background-color: #138496;
+            }
+            QPushButton:pressed {
+                background-color: #117a8b;
+            }
+            QPushButton:disabled {
+                background-color: #6c757d;
+                color: #adb5bd;
+            }
+        """)
+        test_reconnect_layout.addWidget(self.test_reconnect_btn)
+        test_reconnect_layout.addStretch()
+        auto_reconnect_layout.addLayout(test_reconnect_layout)
+
         # Auto reconnect behavior note
-        reconnect_note = QLabel("ℹ Once reconnected, waits 60 seconds before clicking Start in SOLS.")
+        reconnect_note = QLabel("ℹ Once reconnected, detects RobloxPlayerBeta.exe → waits → sends \\ → Enter → \\ sequence. If you have a slow PC, increase the delay time.")
         reconnect_note.setStyleSheet("color: #888888; font-size: 9px; font-style: italic; margin-top: 5px;")
         auto_reconnect_layout.addWidget(reconnect_note)
 
@@ -4727,8 +4495,8 @@ Click OK to acknowledge these instructions."""
 
         scroll_area.setWidget(scroll_widget)
         
-        # Set layout for controls tab
-        tab_layout = QVBoxLayout(controls_tab)
+        # Set layout for auto-reconnect tab
+        tab_layout = QVBoxLayout(auto_reconnect_tab)
         tab_layout.setContentsMargins(0, 0, 0, 0)
         tab_layout.addWidget(scroll_area)
 
@@ -4767,6 +4535,7 @@ Click OK to acknowledge these instructions."""
         premade_selector_layout.addWidget(premade_label)
 
         self.premade_combo = QComboBox()
+        self.calibration_combo = self.premade_combo  # Alias for compatibility
         self.premade_combo.addItem("Select a premade calibration...")
         for config_name in self.premade_calibrations.keys():
             self.premade_combo.addItem(config_name)
@@ -4954,7 +4723,7 @@ Click OK to acknowledge these instructions."""
         scroll_layout.setSpacing(15)
         scroll_layout.setContentsMargins(10, 10, 10, 10)
 
-        # Webhook Settings Section
+        # Webhook Settings Section (important notice removed)
         webhook_group = QGroupBox("Webhook Settings")
         webhook_layout = QVBoxLayout(webhook_group)
         webhook_layout.setContentsMargins(12, 15, 12, 12)
@@ -5224,7 +4993,7 @@ Click OK to acknowledge these instructions."""
         """
 
     def create_settings_tab(self):
-        """Create the Settings tab with failsafe, auto-sell, and other settings"""
+        """Create the Settings tab with auto-sell configuration, pathing, failsafe, and mouse delay settings"""
         settings_tab = QWidget()
         self.tab_widget.addTab(settings_tab, "Settings")
         
@@ -5239,7 +5008,191 @@ Click OK to acknowledge these instructions."""
         scroll_layout.setSpacing(15)
         scroll_layout.setContentsMargins(10, 10, 10, 10)
 
-        # Failsafe Settings
+        # 1. Auto-Sell Configuration Settings (Number 1 setting)
+        auto_sell_group = QGroupBox("Auto-Sell Configuration")
+        auto_sell_layout = QVBoxLayout(auto_sell_group)
+        auto_sell_layout.setContentsMargins(12, 15, 12, 12)
+        auto_sell_layout.setSpacing(8)
+
+        auto_sell_info = QLabel("Configure automatic selling behavior")
+        auto_sell_info.setStyleSheet("color: #888888; font-size: 11px; margin-bottom: 6px;")
+        auto_sell_layout.addWidget(auto_sell_info)
+
+        # Auto-sell enabled checkbox
+        self.auto_sell_checkbox = QCheckBox("Enable Auto-Sell")
+        self.auto_sell_checkbox.setChecked(self.automation.auto_sell_enabled)
+        self.auto_sell_checkbox.stateChanged.connect(self.update_auto_sell_enabled)
+        self.auto_sell_checkbox.setStyleSheet("""
+            QCheckBox {
+                color: #e0e0e0;
+                font-size: 11px;
+                margin: 3px 0;
+            }
+            QCheckBox::indicator {
+                width: 16px;
+                height: 16px;
+                border: 2px solid #555555;
+                border-radius: 3px;
+                background-color: #2d2d2d;
+            }
+            QCheckBox::indicator:checked {
+                background-color: #28a745;
+                border-color: #28a745;
+            }
+        """)
+        auto_sell_layout.addWidget(self.auto_sell_checkbox)
+
+        # Auto-sell configuration dropdown
+        config_layout = QHBoxLayout()
+        config_layout.setSpacing(10)
+
+        config_label = QLabel("Auto-Sell Mode:")
+        config_label.setStyleSheet("color: #e0e0e0; font-size: 11px;")
+        config_layout.addWidget(config_label)
+
+        self.auto_sell_config_combo = QComboBox()
+        self.auto_sell_config_combo.addItems(["Legacy", "Sell All (Recommended)"])
+        self.auto_sell_config_combo.setCurrentText(self.automation.auto_sell_configuration)
+        self.auto_sell_config_combo.currentTextChanged.connect(self.update_auto_sell_configuration)
+        self.auto_sell_config_combo.setStyleSheet("""
+            QComboBox {
+                background-color: #2d2d2d;
+                color: #e0e0e0;
+                border: 1px solid #555555;
+                border-radius: 6px;
+                padding: 6px 10px;
+                font-size: 11px;
+                min-width: 180px;
+            }
+            QComboBox::drop-down {
+                border: none;
+                width: 20px;
+            }
+            QComboBox::down-arrow {
+                image: none;
+                border-left: 5px solid transparent;
+                border-right: 5px solid transparent;
+                border-top: 5px solid #e0e0e0;
+                margin-right: 5px;
+            }
+            QComboBox QAbstractItemView {
+                background-color: #2d2d2d;
+                color: #e0e0e0;
+                border: 1px solid #555555;
+                selection-background-color: #4a9eff;
+            }
+        """)
+        config_layout.addWidget(self.auto_sell_config_combo)
+        config_layout.addStretch()
+
+        auto_sell_layout.addLayout(config_layout)
+
+        # Auto-sell configuration explanation
+        config_explanation = QLabel("• Legacy: Sells the same number of times as fish caught\n• Sell All: Always sells exactly 22 times (recommended)")
+        config_explanation.setWordWrap(True)
+        config_explanation.setStyleSheet("""
+            QLabel {
+                color: #17a2b8;
+                background-color: #1c2b2f;
+                border: 1px solid #28536b;
+                border-radius: 4px;
+                padding: 8px;
+                font-size: 10px;
+                margin-top: 5px;
+            }
+        """)
+        auto_sell_layout.addWidget(config_explanation)
+
+        # Fish count until auto-sell setting
+        fish_count_layout = QHBoxLayout()
+        fish_count_layout.setSpacing(10)
+
+        fish_count_label = QLabel("Fish Caught Until Auto Sell:")
+        fish_count_label.setStyleSheet("color: #e0e0e0; font-size: 11px;")
+        fish_count_layout.addWidget(fish_count_label)
+
+        self.fish_count_spinbox = QSpinBox()
+        self.fish_count_spinbox.setRange(1, 100)  # 1 to 100 fish
+        self.fish_count_spinbox.setValue(getattr(self.automation, 'fish_count_until_auto_sell', 10))  # Default to 10
+        self.fish_count_spinbox.setSuffix(" fish")
+        self.fish_count_spinbox.valueChanged.connect(self.update_fish_count_until_auto_sell)
+        self.fish_count_spinbox.setStyleSheet("""
+            QSpinBox {
+                background-color: #2d2d2d;
+                color: #e0e0e0;
+                border: 1px solid #555555;
+                border-radius: 4px;
+                padding: 4px 8px;
+                font-size: 11px;
+                min-width: 80px;
+            }
+            QSpinBox::up-button, QSpinBox::down-button {
+                background-color: #404040;
+                border: 1px solid #555555;
+                width: 16px;
+            }
+            QSpinBox::up-button:hover, QSpinBox::down-button:hover {
+                background-color: #4a9eff;
+            }
+        """)
+        fish_count_layout.addWidget(self.fish_count_spinbox)
+        fish_count_layout.addStretch()
+
+        auto_sell_layout.addLayout(fish_count_layout)
+        scroll_layout.addWidget(auto_sell_group)
+
+        # 2. Pathing Settings
+        pathing_group = QGroupBox("Pathing Settings")
+        pathing_layout = QVBoxLayout(pathing_group)
+        pathing_layout.setContentsMargins(12, 15, 12, 12)
+        pathing_layout.setSpacing(8)
+
+        pathing_info = QLabel("For players without the VIP gamepass (NOT VIP+, VIP)")
+        pathing_info.setStyleSheet("color: #888888; font-size: 11px; margin-bottom: 6px;")
+        pathing_layout.addWidget(pathing_info)
+
+        # VIP paths checkbox
+        self.vip_paths_checkbox = QCheckBox("Use VIP Paths (Faster with VIP Gamepass)")
+        self.vip_paths_checkbox.setChecked(self.automation.use_vip_paths)
+        self.vip_paths_checkbox.stateChanged.connect(self.update_vip_paths)
+        self.vip_paths_checkbox.setStyleSheet("""
+            QCheckBox {
+                color: #e0e0e0;
+                font-size: 11px;
+                margin: 3px 0;
+            }
+            QCheckBox::indicator {
+                width: 16px;
+                height: 16px;
+                border: 2px solid #555555;
+                border-radius: 3px;
+                background-color: #2d2d2d;
+            }
+            QCheckBox::indicator:checked {
+                background-color: #28a745;
+                border-color: #28a745;
+            }
+        """)
+        pathing_layout.addWidget(self.vip_paths_checkbox)
+
+        # Info message
+        pathing_info_msg = QLabel("✓ When enabled: Uses fast VIP (NOT +) paths\n✗ When disabled: Uses slower non-VIP paths")
+        pathing_info_msg.setWordWrap(True)
+        pathing_info_msg.setStyleSheet("""
+            QLabel {
+                color: #155724;
+                background-color: #d4edda;
+                border: 1px solid #c3e6cb;
+                border-radius: 4px;
+                padding: 8px;
+                font-size: 10px;
+                margin-top: 5px;
+            }
+        """)
+        pathing_layout.addWidget(pathing_info_msg)
+        scroll_layout.addWidget(pathing_group)
+
+        # 3. Failsafe Settings
         failsafe_group = QGroupBox("Failsafe System")
         failsafe_layout = QVBoxLayout(failsafe_group)
         failsafe_layout.setContentsMargins(12, 15, 12, 12)
@@ -5311,130 +5264,7 @@ Click OK to acknowledge these instructions."""
         failsafe_layout.addLayout(timeout_layout)
         scroll_layout.addWidget(failsafe_group)
 
-        # Auto-sell Settings
-        auto_sell_group = QGroupBox("Auto-Sell System")
-        auto_sell_layout = QVBoxLayout(auto_sell_group)
-        auto_sell_layout.setContentsMargins(12, 15, 12, 12)
-        auto_sell_layout.setSpacing(8)
-
-        auto_sell_info = QLabel("Automatically sells caught fish when enabled")
-        auto_sell_info.setStyleSheet("color: #888888; font-size: 11px; margin-bottom: 6px;")
-        auto_sell_layout.addWidget(auto_sell_info)
-
-        # Auto-sell enabled checkbox
-        self.auto_sell_checkbox = QCheckBox("Enable Auto-Sell")
-        self.auto_sell_checkbox.setChecked(self.automation.auto_sell_enabled)
-        self.auto_sell_checkbox.stateChanged.connect(self.update_auto_sell_enabled)
-        self.auto_sell_checkbox.setStyleSheet("""
-            QCheckBox {
-                color: #e0e0e0;
-                font-size: 11px;
-                margin: 3px 0;
-            }
-            QCheckBox::indicator {
-                width: 16px;
-                height: 16px;
-                border: 2px solid #555555;
-                border-radius: 3px;
-                background-color: #2d2d2d;
-            }
-            QCheckBox::indicator:checked {
-                background-color: #28a745;
-                border-color: #28a745;
-            }
-        """)
-        auto_sell_layout.addWidget(self.auto_sell_checkbox)
-
-        # Fish count until auto-sell setting
-        fish_count_layout = QHBoxLayout()
-        fish_count_layout.setSpacing(10)
-
-        fish_count_label = QLabel("Fish Caught Until Auto Sell:")
-        fish_count_label.setStyleSheet("color: #e0e0e0; font-size: 11px;")
-        fish_count_layout.addWidget(fish_count_label)
-
-        self.fish_count_spinbox = QSpinBox()
-        self.fish_count_spinbox.setRange(1, 100)  # 1 to 100 fish
-        self.fish_count_spinbox.setValue(getattr(self.automation, 'fish_count_until_auto_sell', 10))  # Default to 10
-        self.fish_count_spinbox.setSuffix(" fish")
-        self.fish_count_spinbox.valueChanged.connect(self.update_fish_count_until_auto_sell)
-        self.fish_count_spinbox.setStyleSheet("""
-            QSpinBox {
-                background-color: #2d2d2d;
-                color: #e0e0e0;
-                border: 1px solid #555555;
-                border-radius: 4px;
-                padding: 4px 8px;
-                font-size: 11px;
-                min-width: 80px;
-            }
-            QSpinBox::up-button, QSpinBox::down-button {
-                background-color: #404040;
-                border: 1px solid #555555;
-                width: 16px;
-            }
-            QSpinBox::up-button:hover, QSpinBox::down-button:hover {
-                background-color: #4a9eff;
-            }
-        """)
-        fish_count_layout.addWidget(self.fish_count_spinbox)
-        fish_count_layout.addStretch()
-
-        auto_sell_layout.addLayout(fish_count_layout)
-        scroll_layout.addWidget(auto_sell_group)
-
-        # Pathing Settings
-        pathing_group = QGroupBox("Pathing Settings")
-        pathing_layout = QVBoxLayout(pathing_group)
-        pathing_layout.setContentsMargins(12, 15, 12, 12)
-        pathing_layout.setSpacing(8)
-
-        pathing_info = QLabel("For players without the VIP gamepass - disables navigation and auto-sell features")
-        pathing_info.setStyleSheet("color: #888888; font-size: 11px; margin-bottom: 6px;")
-        pathing_layout.addWidget(pathing_info)
-
-        # Disable all pathing checkbox
-        self.disable_pathing_checkbox = QCheckBox("Disable All Pathing (No VIP Gamepass)")
-        self.disable_pathing_checkbox.setChecked(self.automation.disable_all_pathing)
-        self.disable_pathing_checkbox.stateChanged.connect(self.update_disable_all_pathing)
-        self.disable_pathing_checkbox.setStyleSheet("""
-            QCheckBox {
-                color: #e0e0e0;
-                font-size: 11px;
-                margin: 3px 0;
-            }
-            QCheckBox::indicator {
-                width: 16px;
-                height: 16px;
-                border: 2px solid #555555;
-                border-radius: 3px;
-                background-color: #2d2d2d;
-            }
-            QCheckBox::indicator:checked {
-                background-color: #ffc107;
-                border-color: #ffc107;
-            }
-        """)
-        pathing_layout.addWidget(self.disable_pathing_checkbox)
-
-        # Warning message
-        pathing_warning = QLabel("⚠️ When enabled: Only basic fishing will work, no auto-sell or navigation")
-        pathing_warning.setWordWrap(True)
-        pathing_warning.setStyleSheet("""
-            QLabel {
-                color: #856404;
-                background-color: #fff3cd;
-                border: 1px solid #ffeaa7;
-                border-radius: 4px;
-                padding: 8px;
-                font-size: 10px;
-                margin-top: 5px;
-            }
-        """)
-        pathing_layout.addWidget(pathing_warning)
-        scroll_layout.addWidget(pathing_group)
-
-        # Mouse Delay Settings
+        # 4. Mouse Delay Settings
         mouse_delay_group = QGroupBox("Mouse Delay Settings")
         mouse_delay_layout = QVBoxLayout(mouse_delay_group)
         mouse_delay_layout.setContentsMargins(12, 15, 12, 12)
@@ -5643,16 +5473,13 @@ Click OK to acknowledge these instructions."""
         # Apply the premade calibration
         premade_coords = self.premade_calibrations[selected_text]
 
-        # Update coordinates directly
+        # Update coordinates directly and refresh UI
         for coord_name, coord_value in premade_coords.items():
             if coord_name in self.automation.coordinates:
-                self.automation.coordinates[coord_name] = coord_value
+                self.update_coordinate_and_ui(coord_name, coord_value)
 
-        # Update all coordinate labels in the UI (only if they exist)
-        if hasattr(self, 'coord_labels_widgets'):
-            for coord_name in self.coord_labels_widgets:
-                coord_label = self.coord_labels_widgets[coord_name]
-                coord_label.setText(self.get_coord_text(coord_name))
+        # Ensure all UI labels are updated
+        self.update_all_coordinate_labels()
 
         # Auto-save the calibration
         self.automation.save_calibration()
@@ -5711,7 +5538,12 @@ Click OK to acknowledge these instructions."""
         if msg.exec() == QMessageBox.StandardButton.Yes:
             # Reset to default coordinates based on detected resolution
             self.automation.current_resolution = self.automation.detect_resolution()
-            self.automation.coordinates = self.automation.get_coordinates_for_resolution(self.automation.current_resolution)
+            new_coordinates = self.automation.get_coordinates_for_resolution(self.automation.current_resolution)
+            
+            # Apply new coordinates and update UI
+            for coord_name, coord_value in new_coordinates.items():
+                if coord_name in self.automation.coordinates:
+                    self.update_coordinate_and_ui(coord_name, coord_value)
 
             # Auto-save the reset coordinates
             self.automation.save_calibration()
@@ -5741,11 +5573,18 @@ Click OK to acknowledge these instructions."""
 
     def update_all_coordinate_labels(self):
         """Update all coordinate labels to reflect current coordinates."""
+        # Update main coordinate labels
         if hasattr(self, 'coord_labels_widgets') and hasattr(self, 'coord_labels'):
             for coord_name in self.coord_labels.keys():
                 if coord_name in self.coord_labels_widgets:
                     coord_label = self.coord_labels_widgets[coord_name]
                     coord_label.setText(self.get_coord_text(coord_name))
+        
+        # Update shop coordinate labels
+        if hasattr(self, 'shop_coord_labels'):
+            for coord_name in self.shop_coord_labels.keys():
+                coord_label = self.shop_coord_labels[coord_name]
+                coord_label.setText(self.get_shop_coord_text(coord_name))
 
     def set_1080p_windowed_config(self):
         """Set configuration to 1080p windowed mode"""

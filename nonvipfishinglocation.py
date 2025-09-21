@@ -68,12 +68,14 @@ def run_macro(macro, delay=2, emergency_stop_check=None):
     # Break initial delay into smaller chunks for emergency stop checking
     for _ in range(int(delay * 10)):  # Check every 0.1 seconds
         if emergency_stop_check and emergency_stop_check():
+            print("Emergency stop detected during non-VIP fishing location macro initial delay")
             return
         sleep(0.1)
 
     for action in macro:
         # Check for emergency stop before each action
         if emergency_stop_check and emergency_stop_check():
+            print("Emergency stop detected during non-VIP fishing location macro")
             return
             
         match action["type"]:
@@ -85,11 +87,13 @@ def run_macro(macro, delay=2, emergency_stop_check=None):
                 
                 for _ in range(chunks):
                     if emergency_stop_check and emergency_stop_check():
+                        print("Emergency stop detected during non-VIP fishing location macro wait")
                         return
                     sleep(0.1)
                 
                 if remainder > 0:
                     if emergency_stop_check and emergency_stop_check():
+                        print("Emergency stop detected during non-VIP fishing location macro wait")
                         return
                     sleep(remainder)
             case "key_press":
@@ -113,56 +117,26 @@ def run_macro(macro, delay=2, emergency_stop_check=None):
 macro_actions = [{'type': 'key_press', 'key': 'w'},
 {'type': 'wait', 'duration': 1},
 {'type': 'key_press', 'key': 'a'},
-{'type': 'wait', 'duration': 4882},
-{'type': 'key_press', 'key': 'd'},
-{'type': 'wait', 'duration': 10},
+{'type': 'wait', 'duration': 6740},
 {'type': 'key_release', 'key': 'a'},
-{'type': 'wait', 'duration': 583},
+{'type': 'wait', 'duration': 163},
+{'type': 'key_press', 'key': 'd'},
+{'type': 'wait', 'duration': 564},
 {'type': 'key_release', 'key': 'd'},
-{'type': 'wait', 'duration': 1466},
+{'type': 'wait', 'duration': 2098},
 {'type': 'key_press', 'key': 'a'},
-{'type': 'wait', 'duration': 857},
+{'type': 'wait', 'duration': 651},
 {'type': 'key_release', 'key': 'a'},
-{'type': 'wait', 'duration': 262},
+{'type': 'wait', 'duration': 58},
 {'type': 'key_release', 'key': 'w'},
-{'type': 'wait', 'duration': 187},
-{'type': 'key_press', 'key': 's'},
-{'type': 'wait', 'duration': 326},
-{'type': 'key_release', 'key': 's'},
-{'type': 'wait', 'duration': 149},
+{'type': 'wait', 'duration': 215},
 {'type': 'key_press', 'key': 'd'},
-{'type': 'wait', 'duration': 1056},
+{'type': 'wait', 'duration': 1034},
 {'type': 'key_press', 'key': 'w'},
-{'type': 'wait', 'duration': 1673},
+{'type': 'wait', 'duration': 3273},
 {'type': 'key_release', 'key': 'd'},
-{'type': 'wait', 'duration': 2385},
+{'type': 'wait', 'duration': 1427},
 {'type': 'key_release', 'key': 'w'}]
 
 if __name__ == "__main__":
-    run_macro([{'type': 'key_press', 'key': 'w'},
-{'type': 'wait', 'duration': 1},
-{'type': 'key_press', 'key': 'a'},
-{'type': 'wait', 'duration': 4882},
-{'type': 'key_press', 'key': 'd'},
-{'type': 'wait', 'duration': 10},
-{'type': 'key_release', 'key': 'a'},
-{'type': 'wait', 'duration': 583},
-{'type': 'key_release', 'key': 'd'},
-{'type': 'wait', 'duration': 1466},
-{'type': 'key_press', 'key': 'a'},
-{'type': 'wait', 'duration': 857},
-{'type': 'key_release', 'key': 'a'},
-{'type': 'wait', 'duration': 262},
-{'type': 'key_release', 'key': 'w'},
-{'type': 'wait', 'duration': 187},
-{'type': 'key_press', 'key': 's'},
-{'type': 'wait', 'duration': 326},
-{'type': 'key_release', 'key': 's'},
-{'type': 'wait', 'duration': 149},
-{'type': 'key_press', 'key': 'd'},
-{'type': 'wait', 'duration': 1056},
-{'type': 'key_press', 'key': 'w'},
-{'type': 'wait', 'duration': 1673},
-{'type': 'key_release', 'key': 'd'},
-{'type': 'wait', 'duration': 2385},
-{'type': 'key_release', 'key': 'w'}])
+    run_macro(macro_actions)
