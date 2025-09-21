@@ -57,7 +57,7 @@
    - **Confirm Button**: Button to confirm sale
    - **Mouse Idle Position**: Safe area for mouse when not in use
    - **Shaded Area**: Location to sample dynamic shaded colors
-3. Tutorial at: https://youtu.be/clfksIL8GVU
+3. Tutorial at: https://youtu.be/XgNnymJ-26E
 
 ### Running the Macro
 - **Start**: Press F1 or click "Start Macro"
