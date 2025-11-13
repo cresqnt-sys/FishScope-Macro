@@ -4,11 +4,13 @@ keyboard
 autoit
 pyautogui
 requests
-numpy
+numpy<2
 pytesseract
-opencv-python
+opencv-python<5
+pywin32
 fuzzywuzzy
 python-Levenshtein
 screeninfo
 pynput
 mousekey
+packaging

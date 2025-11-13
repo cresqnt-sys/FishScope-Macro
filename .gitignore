@@ -214,3 +214,6 @@ test_webhooks.py
 debug_ocr_capture.png
 Run FISHSCOPE.bat
 fishscopeconfig.json.backup
+.specify
+.vscode
+fishscopetools
