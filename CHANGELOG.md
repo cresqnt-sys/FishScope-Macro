@@ -1,3 +1,21 @@
+# FishScope 2.4-Beta2
+- Major update fixing many bugs and adding many improvements. The macro is now up to 3x better than it was before for fishing.
+### Added
+- Reworked and improved major aspects of Auto Reconnect
+- Improved error handling and fallback mechanisms for Roblox launching
+### Changed
+- Code formatting improvements with consistent spacing around operators
+- Change Auto Reconnect to work with Sols RNG Eon 1-10
+- Added a 2 second reset delay cause of Roblox's new update
+- Reworked Fishing MiniGame Logic
+- Made FishScope up to 3x better on lower end PCs than before. (Tested on Dell Inspiron 3670 | Intel Core i5 8th Gen | iGPU)
+
+### Fixed
+- Minor build and packaging issues
+- Update check compatibility with pre-release tag names
+
+---
+
 # FishScope 2.4-Beta1
 -# Beta release providing early access to 2.4 features and stability improvements.
 ### Added
