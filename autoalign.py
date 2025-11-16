@@ -17,11 +17,11 @@ def auto_align_camera (delay =2 ,emergency_stop_check =None ):
     if emergency_stop_check and emergency_stop_check ():
         return 
     autoit .send ('{ESC}')
-    time .sleep (0.15 )
+    time .sleep (1.0 )
     if emergency_stop_check and emergency_stop_check ():
         return 
     autoit .send ('r')
-    time .sleep (0.15 )
+    time .sleep (2.0 )
     if emergency_stop_check and emergency_stop_check ():
         return 
     autoit .send ('{ENTER}')

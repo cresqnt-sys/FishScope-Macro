@@ -7,7 +7,7 @@ from PyQt6 .QtGui import QFont
 import sys 
 import os 
 from packaging .version import parse as parse_version 
-CURRENT_VERSION ='2.4-Beta2'
+CURRENT_VERSION ='2.4-Beta3'
 
 class UpdateChecker (QThread ):
     update_available =pyqtSignal (str ,str )
@@ -34,10 +34,19 @@ class UpdateChecker (QThread ):
 
     def is_newer_version (self ,latest ,current ):
         try :
-
-            return parse_version (latest )>parse_version (current )
+            # Normalize version strings to handle non-standard pre-releases
+            def normalize_version(v):
+                # Replace common non-standard pre-release identifiers
+                v = v.replace('Beta', 'b').replace('beta', 'b')
+                v = v.replace('Alpha', 'a').replace('alpha', 'a')
+                v = v.replace('RC', 'rc').replace('rc', 'rc')
+                return v
+            
+            latest_norm = normalize_version(latest)
+            current_norm = normalize_version(current)
+            return parse_version (latest_norm )>parse_version (current_norm )
         except Exception :
-
+            # Fallback to simple numeric comparison if parsing still fails
             try :
                 def numeric_parts (v ):
                     base =v .split ('-')[0 ]

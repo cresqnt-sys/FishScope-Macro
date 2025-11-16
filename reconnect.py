@@ -57,7 +57,7 @@ class AutoReconnectManager :
         self .auto_reconnect_in_progress =False 
         self .roblox_private_server_link =''
         self .roblox_window_mode ='windowed'
-        self .backslash_sequence_delay =60.0 
+        self .backslash_sequence_delay =30.0 
         self .is_pyinstaller =getattr (sys ,'frozen',False )and hasattr (sys ,'_MEIPASS')
         if self .is_pyinstaller :
             print ('Running in PyInstaller executable - using Windows API for process management')
@@ -334,13 +334,13 @@ class AutoReconnectManager :
             return False 
 
     def press_backslash_sequence (self ):
-        total_delay =max (60.0 ,self .backslash_sequence_delay )
+        total_delay =max (30.0 ,self .backslash_sequence_delay )
         try :
             self .focus_roblox_window ()
             time .sleep (0.5 )
             self ._prepare_and_wait (total_delay )
             print ('Wait complete, now executing key sequence...')
-            print ('Now actions are â†’ \\ â†’ Enter â†’ \\ then continue')
+            print ('Now actions are → \\ → Enter → Down Arrow → \\ then continue')
             self ._send_backslash_sequence (autoit .send )
             print (f'Backslash sequence completed after {total_delay } second delay + key execution')
         except Exception as e :
@@ -349,7 +349,7 @@ class AutoReconnectManager :
                 time .sleep (0.5 )
                 self ._prepare_and_wait (total_delay )
                 print ('Wait complete, now executing key sequence (fallback)...')
-                print ('Now actions are â†’ \\ â†’ Enter â†’ \\ then continue')
+                print ('Now actions are → \\ → Enter → Down Arrow → \\ then continue')
                 if KEYBOARD_AVAILABLE :
                     self ._send_backslash_sequence (lambda key :keyboard .send ('enter'if key =='{ENTER}'else key ))
                     print (f'Backslash sequence completed (fallback) after {total_delay } second delay + key execution')
@@ -366,9 +366,11 @@ class AutoReconnectManager :
 
     def _send_backslash_sequence (self ,send_func ):
         send_func ('\\')
-        time .sleep (0.5 )
+        time .sleep (2.0 )
+        send_func ('{DOWN}')
+        time .sleep (2.0 )
         send_func ('{ENTER}')
-        time .sleep (0.5 )
+        time .sleep (2.0 )
         send_func ('\\')
 
     def focus_roblox_window (self ):
@@ -574,7 +576,7 @@ class AutoReconnectManager :
         if 'roblox_window_mode'in config_data :
             self .roblox_window_mode =str (config_data ['roblox_window_mode'])
         if 'backslash_sequence_delay'in config_data :
-            self .backslash_sequence_delay =max (60.0 ,float (config_data ['backslash_sequence_delay']))
+            self .backslash_sequence_delay =max (30.0 ,float (config_data ['backslash_sequence_delay']))
 
     def validate_private_server_link (self ,link ):
         link =link .strip ()
