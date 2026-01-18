@@ -1,8 +1,152 @@
 {
-    "Flounder": {
+    "Striped Marlin": {
+        "rarity": "Legendary"
+    },
+    "PLACEHOLDER 1": {
+        "rarity": "Legendary"
+    },
+    "Dragon Fish": {
+        "rarity": "Legendary"
+    },
+    "Antarctic Icefish": {
+        "rarity": "Legendary"
+    },
+    "Goblin Shark": {
+        "rarity": "Legendary"
+    },
+    "Skull Moray Eel": {
+        "rarity": "Legendary"
+    },
+    "Angel Shark": {
+        "rarity": "Legendary"
+    },
+    "Sharko": {
+        "rarity": "Legendary"
+    },
+    "Umbrella Octopus": {
+        "rarity": "Legendary"
+    },
+    "Ripsaw Catfish": {
+        "rarity": "Legendary"
+    },
+    "PLACEHOLDER 2": {
+        "rarity": "Legendary"
+    },
+    "Starfish": {
+        "rarity": "Legendary"
+    },
+    "Skull Mackerel": {
+        "rarity": "Rare"
+    },
+    "Barreleye": {
+        "rarity": "Rare"
+    },
+    "Marlin": {
+        "rarity": "Rare"
+    },
+    "Freshwater Angelfish": {
+        "rarity": "Rare"
+    },
+    "Spiraldrift": {
+        "rarity": "Rare"
+    },
+    "Sailfish": {
+        "rarity": "Rare"
+    },
+    "PLACEHOLDER 3": {
+        "rarity": "Rare"
+    },
+    "Sunfish": {
+        "rarity": "Rare"
+    },
+    "Spinepuff": {
+        "rarity": "Rare"
+    },
+    "PLACEHOLDER 4": {
+        "rarity": "Rare"
+    },
+    "Magma Discus": {
+        "rarity": "Rare"
+    },
+    "Pelican Eel": {
+        "rarity": "Rare"
+    },
+    "Crabbie": {
+        "rarity": "Uncommon"
+    },
+    "Wahoo": {
+        "rarity": "Uncommon"
+    },
+    "Skull Seahorse": {
+        "rarity": "Uncommon"
+    },
+    "Hand Fish": {
+        "rarity": "Uncommon"
+    },
+    "Turtlo": {
+        "rarity": "Uncommon"
+    },
+    "Ocean Sunfish Fry": {
+        "rarity": "Uncommon"
+    },
+    "Obsidian Tiger Oscar": {
+        "rarity": "Uncommon"
+    },
+    "Duskray": {
+        "rarity": "Uncommon"
+    },
+    "Bluefin Tuna": {
+        "rarity": "Uncommon"
+    },
+    "Bluetang": {
+        "rarity": "Uncommon"
+    },
+    "Squibby": {
+        "rarity": "Uncommon"
+    },
+    "Octo": {
+        "rarity": "Uncommon"
+    },
+    "Tripod Fish": {
+        "rarity": "Uncommon"
+    },
+    "Moonfish": {
+        "rarity": "Uncommon"
+    },
+    "Gwrasse": {
+        "rarity": "Uncommon"
+    },
+    "Monk Fish": {
+        "rarity": "Uncommon"
+    },
+    "Marine Angelfish": {
+        "rarity": "Uncommon"
+    },
+    "Wolf Eel": {
+        "rarity": "Common"
+    },
+    "Ghost Shark": {
         "rarity": "Common"
     },
     "Stonefish": {
+        "rarity": "Common"
+    },
+    "Skull Piranha": {
+        "rarity": "Common"
+    },
+    "Rosefin": {
+        "rarity": "Common"
+    },
+    "Flying Fish": {
+        "rarity": "Common"
+    },
+    "Zebream": {
+        "rarity": "Common"
+    },
+    "Tunavax": {
+        "rarity": "Common"
+    },
+    "Shrimprite": {
         "rarity": "Common"
     },
     "Silverfin": {
@@ -11,59 +155,17 @@
     "Emberfin": {
         "rarity": "Common"
     },
-    "Rosefin": {
+    "Coelancanth": {
+        "rarity": "Common"
+    },
+    "PLACEHOLDER 5": {
+        "rarity": "Common"
+    },
+    "Flounder": {
         "rarity": "Common"
     },
     "Piranha": {
         "rarity": "Common"
-    },
-    "Zebream": {
-        "rarity": "Common"
-    },
-    "Tunavox": {
-        "rarity": "Common"
-    },
-    "Shrimprite": {
-        "rarity": "Common"
-    },
-    "Gwrasse": {
-        "rarity": "Uncommon"
-    },
-    "Bluetang": {
-        "rarity": "Uncommon"
-    },
-    "Moonfish": {
-        "rarity": "Uncommon"
-    },
-    "Duskray": {
-        "rarity": "Uncommon"
-    },
-    "Squibbly": {
-        "rarity": "Uncommon"
-    },
-    "Turtlo": {
-        "rarity": "Uncommon"
-    },
-    "Octo": {
-        "rarity": "Uncommon"
-    },
-    "Crabbie": {
-        "rarity": "Uncommon"
-    },
-    "Spiraldrift": {
-        "rarity": "Rare"
-    },
-    "Spinepuff": {
-        "rarity": "Rare"
-    },
-    "Sharko": {
-        "rarity": "Rare"
-    },
-    "Marlin": {
-        "rarity": "Rare"
-    },
-    "Sunfish": {
-        "rarity": "Rare"
     },
     "Old Boot": {
         "rarity": "Trash"
