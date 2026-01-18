@@ -1190,7 +1190,7 @@ class MouseAutomation :
                         self .automation_phase ='selling'
                     elif self .automation_phase =='selling':
                         if self .auto_sell_configuration =='Sell All (Recommended)':
-                            sell_count =51
+                            sell_count =56
                         else :
                             sell_count =self .fish_count_until_auto_sell 
                         self .send_phase_change_notification ('pre_sell','selling')
@@ -2833,7 +2833,7 @@ class CalibrationUI (QMainWindow ):
         notice_layout =QVBoxLayout (notice_group )
         notice_layout .setContentsMargins (12 ,15 ,12 ,12 )
         notice_layout .setSpacing (8 )
-        notice_text =QLabel ("⚠️ BEFORE STARTING THE MACRO:\n\n1. Configure Calibrations: Go to the 'Calibrations' tab and apply the correct calibration for your screen resolution and scale. Without proper calibrations, the macro will not work correctly. By defult, the macro is calibrated for the SELL ALL mode, in order to use the Legacy Sell mode you must calibrate the Sell Button to the normal sell button.\n\n2. Adjust Settings: Visit the 'Settings' tab to configure auto-sell behavior and other preferences according to your needs.\n\nAuto-Sell Modes Explained:\n• Legacy Mode: Sells the same number of times as fish caught (e.g., catch 10 fish → sell 10 times)\n• Sell All Mode (Recommended): Always sells exactly 51 times regardless of fish count\n\n✅ Sell All mode is recommended because it significantly reduces the time spent selling fish, making the macro more efficient overall.")
+        notice_text =QLabel ("⚠️ BEFORE STARTING THE MACRO:\n\n1. Configure Calibrations: Go to the 'Calibrations' tab and apply the correct calibration for your screen resolution and scale. Without proper calibrations, the macro will not work correctly. By defult, the macro is calibrated for the SELL ALL mode, in order to use the Legacy Sell mode you must calibrate the Sell Button to the normal sell button.\n\n2. Adjust Settings: Visit the 'Settings' tab to configure auto-sell behavior and other preferences according to your needs.\n\nAuto-Sell Modes Explained:\n• Legacy Mode: Sells the same number of times as fish caught (e.g., catch 10 fish → sell 10 times)\n• Sell All Mode (Recommended): Always sells exactly 56 times regardless of fish count\n\n✅ Sell All mode is recommended because it significantly reduces the time spent selling fish, making the macro more efficient overall.")
         notice_text .setWordWrap (True )
         notice_text .setStyleSheet ('\n            QLabel {\n                color: #f8d7da;\n                background-color: #2c1b1e;\n                border: 2px solid #721c24;\n                border-radius: 6px;\n                padding: 12px;\n                font-size: 11px;\n                line-height: 1.4;\n                margin: 2px;\n            }\n        ')
         notice_layout .addWidget (notice_text )
@@ -3250,7 +3250,7 @@ class CalibrationUI (QMainWindow ):
         config_layout .addWidget (self .auto_sell_config_combo )
         config_layout .addStretch ()
         auto_sell_layout .addLayout (config_layout )
-        config_explanation =QLabel ('• Legacy: Sells the same number of times as fish caught\n• Sell All: Always sells exactly 51 times (recommended)')
+        config_explanation =QLabel ('• Legacy: Sells the same number of times as fish caught\n• Sell All: Always sells exactly 56 times (recommended)')
         config_explanation .setWordWrap (True )
         config_explanation .setStyleSheet ('\n            QLabel {\n                color: #17a2b8;\n                background-color: #1c2b2f;\n                border: 1px solid #28536b;\n                border-radius: 4px;\n                padding: 8px;\n                font-size: 10px;\n                margin-top: 5px;\n            }\n        ')
         auto_sell_layout .addWidget (config_explanation )
