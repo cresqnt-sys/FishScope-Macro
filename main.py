@@ -604,14 +604,35 @@ class MouseAutomation :
     def color_match (self ,color1 ,color2 ,tolerance ):
         return all ((abs (c1 -c2 )<=tolerance for c1 ,c2 in zip (color1 ,color2 )))
 
-    def load_fish_data (self ):
-        try :
-            response = requests.get('https://raw.githubusercontent.com/cresqnt-sys/FishScope-macro/main/fish-data.json')
-            response.raise_for_status()
-            self.fish_data = response.json()
+    def load_fish_data(self):
+        local_path = os.path.join(os.path.dirname(sys.argv[0]), 'fish-data.json')
+        github_url = 'https://raw.githubusercontent.com/cresqnt-sys/FishScope-Macro/main/fish-data.json'
+        try:
+            with open(local_path, 'r', encoding='utf-8') as f:
+                local_data = f.read()
+            self.fish_data = json.loads(local_data)
         except Exception as e:
+            print(f"Error loading local fish-data.json: {e}")
             self.fish_data = {}
-            print(f'Failed loading fish data: {e}')
+            local_data = None
+        try:
+            response = requests.get(github_url, timeout=5)
+            if response.status_code == 200:
+                github_data = response.text
+                if local_data is not None and github_data != local_data:
+                    try:
+                        with open(local_path, 'w', encoding='utf-8') as f:
+                            f.write(github_data)
+                        self.fish_data = json.loads(github_data)
+                        print("Local fish-data.json updated with wtv changed.")
+                    except Exception as e:
+                        print(f"Error updating local fish-data.json: {e}")
+                else:
+                    print("Local fish-data.json is up to date.")
+            else:
+                print(f"Failed to fetch fish-data.json from GitHub: {response.status_code}")
+        except Exception as e:
+            print(f"Error fetching fish-data.json from GitHub: {e}")
 
     def extract_fish_name (self ):
         if 'fish_caught_desc'not in self .coordinates :
