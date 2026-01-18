@@ -634,6 +634,13 @@ class MouseAutomation :
         except Exception as e:
             print(f"Error fetching fish-data.json from GitHub: {e}")
 
+    def count_non_trash_fish(self):
+        count = 0
+        for fish, data in self.fish_data.items():
+            if isinstance(data, dict) and data.get('rarity', '').lower() != 'trash':
+                count += 1
+        return count
+
     def extract_fish_name (self ):
         if 'fish_caught_desc'not in self .coordinates :
             return ('Unknown Fish',None )
@@ -1190,7 +1197,7 @@ class MouseAutomation :
                         self .automation_phase ='selling'
                     elif self .automation_phase =='selling':
                         if self .auto_sell_configuration =='Sell All (Recommended)':
-                            sell_count =56
+                            sell_count = self.count_non_trash_fish()
                         else :
                             sell_count =self .fish_count_until_auto_sell 
                         self .send_phase_change_notification ('pre_sell','selling')
@@ -1333,6 +1340,7 @@ class MouseAutomation :
 
     def start_automation (self ):
         if self .running :
+            print("FishScope is already running, cancelling start...")
             return 
         if not self .toggle :
             self .toggle =True 
@@ -1366,6 +1374,9 @@ class MouseAutomation :
             self .send_macro_started_notification ()
 
     def stop_automation (self ):
+        if not self.running:
+            print("FishScope is not running, cancelling stop...")
+            return
         if hasattr (self ,'external_script_running')and self .external_script_running :
             print ('WARNING: External script is currently running. Stop will interrupt navigation.')
         print ('STOP ACTIVATED - Stopping macro...')
@@ -2784,6 +2795,9 @@ class CalibrationUI (QMainWindow ):
         creator_label =QLabel ('Created by: cresqnt')
         creator_label .setStyleSheet ('color: #888888; font-size: 11px;')
         footer_layout .addWidget (creator_label )
+        helper_label = QLabel('With help from: vex')
+        helper_label.setStyleSheet('color: #888888; font-size: 11px;')
+        footer_layout.addWidget(helper_label)
         discord_label =QLabel ('<a href="https://discord.gg/6cuCu6ymkX" style="color: #4a9eff; text-decoration: none;">Discord for help: .gg/6cuCu6ymkX</a>')
         discord_label .setStyleSheet ('color: #4a9eff; font-size: 9px;')
         discord_label .setOpenExternalLinks (True )
@@ -2833,7 +2847,7 @@ class CalibrationUI (QMainWindow ):
         notice_layout =QVBoxLayout (notice_group )
         notice_layout .setContentsMargins (12 ,15 ,12 ,12 )
         notice_layout .setSpacing (8 )
-        notice_text =QLabel ("⚠️ BEFORE STARTING THE MACRO:\n\n1. Configure Calibrations: Go to the 'Calibrations' tab and apply the correct calibration for your screen resolution and scale. Without proper calibrations, the macro will not work correctly. By defult, the macro is calibrated for the SELL ALL mode, in order to use the Legacy Sell mode you must calibrate the Sell Button to the normal sell button.\n\n2. Adjust Settings: Visit the 'Settings' tab to configure auto-sell behavior and other preferences according to your needs.\n\nAuto-Sell Modes Explained:\n• Legacy Mode: Sells the same number of times as fish caught (e.g., catch 10 fish → sell 10 times)\n• Sell All Mode (Recommended): Always sells exactly 56 times regardless of fish count\n\n✅ Sell All mode is recommended because it significantly reduces the time spent selling fish, making the macro more efficient overall.")
+        notice_text =QLabel (f"⚠️ BEFORE STARTING THE MACRO:\n\n1. Configure Calibrations: Go to the 'Calibrations' tab and apply the correct calibration for your screen resolution and scale. Without proper calibrations, the macro will not work correctly. By defult, the macro is calibrated for the SELL ALL mode, in order to use the Legacy Sell mode you must calibrate the Sell Button to the normal sell button.\n\n2. Adjust Settings: Visit the 'Settings' tab to configure auto-sell behavior and other preferences according to your needs.\n\nAuto-Sell Modes Explained:\n• Legacy Mode: Sells the same number of times as fish caught (e.g., catch 10 fish → sell 10 times)\n• Sell All Mode (Recommended): Always sells exactly {self.automation.count_non_trash_fish()} times regardless of fish count\n\n✅ Sell All mode is recommended because it significantly reduces the time spent selling fish, making the macro more efficient overall.")
         notice_text .setWordWrap (True )
         notice_text .setStyleSheet ('\n            QLabel {\n                color: #f8d7da;\n                background-color: #2c1b1e;\n                border: 2px solid #721c24;\n                border-radius: 6px;\n                padding: 12px;\n                font-size: 11px;\n                line-height: 1.4;\n                margin: 2px;\n            }\n        ')
         notice_layout .addWidget (notice_text )
@@ -3250,7 +3264,7 @@ class CalibrationUI (QMainWindow ):
         config_layout .addWidget (self .auto_sell_config_combo )
         config_layout .addStretch ()
         auto_sell_layout .addLayout (config_layout )
-        config_explanation =QLabel ('• Legacy: Sells the same number of times as fish caught\n• Sell All: Always sells exactly 56 times (recommended)')
+        config_explanation =QLabel (f'• Legacy: Sells the same number of times as fish caught\n• Sell All: Always sells exactly {self.automation.count_non_trash_fish()} times (recommended)')
         config_explanation .setWordWrap (True )
         config_explanation .setStyleSheet ('\n            QLabel {\n                color: #17a2b8;\n                background-color: #1c2b2f;\n                border: 1px solid #28536b;\n                border-radius: 4px;\n                padding: 8px;\n                font-size: 10px;\n                margin-top: 5px;\n            }\n        ')
         auto_sell_layout .addWidget (config_explanation )
