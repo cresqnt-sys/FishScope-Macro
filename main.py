@@ -715,7 +715,7 @@ class MouseAutomation :
             print (f'Error in send_webhook_message_with_timeout: {e }')
 
     def get_rarity_color (self ,rarity ):
-        rarity_colors ={'Common':12566463 ,'Uncommon':5094750 ,'Rare':2063812 }
+        rarity_colors ={'Common':12566463 ,'Uncommon':5094750 ,'Rare':2063812, 'Legendary':0xA11313 }
         return rarity_colors .get (rarity ,9127187 )
 
     def send_webhook_message (self ,fish_name ,mutation ):
