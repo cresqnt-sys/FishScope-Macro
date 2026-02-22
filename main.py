@@ -604,21 +604,42 @@ class MouseAutomation :
     def color_match (self ,color1 ,color2 ,tolerance ):
         return all ((abs (c1 -c2 )<=tolerance for c1 ,c2 in zip (color1 ,color2 )))
 
-    def load_fish_data (self ):
-        try :
-            fish_data_path =resource_path ('fish-data.json')
-            if os .path .exists (fish_data_path ):
-                with open (fish_data_path ,'r')as f :
-                    self .fish_data =json .load (f )
-                return 
-        except Exception as e :
-            pass 
-        try :
-            response =requests .get ('https://raw.githubusercontent.com/cresqnt-sys/FishScope-macro/main/fish-data.json')
-            response .raise_for_status ()
-            self .fish_data =response .json ()
-        except Exception as e :
-            self .fish_data ={}
+    def load_fish_data(self):
+        local_path = os.path.join(os.path.dirname(sys.argv[0]), 'fish-data.json')
+        github_url = 'https://raw.githubusercontent.com/cresqnt-sys/FishScope-Macro/main/fish-data.json'
+        try:
+            with open(local_path, 'r', encoding='utf-8') as f:
+                local_data = f.read()
+            self.fish_data = json.loads(local_data)
+        except Exception as e:
+            print(f"Error loading local fish-data.json: {e}")
+            self.fish_data = {}
+            local_data = None
+        try:
+            response = requests.get(github_url, timeout=5)
+            if response.status_code == 200:
+                github_data = response.text
+                if local_data is not None and github_data != local_data:
+                    try:
+                        with open(local_path, 'w', encoding='utf-8') as f:
+                            f.write(github_data)
+                        self.fish_data = json.loads(github_data)
+                        print("Local fish-data.json updated with wtv changed.")
+                    except Exception as e:
+                        print(f"Error updating local fish-data.json: {e}")
+                else:
+                    print("Local fish-data.json is up to date.")
+            else:
+                print(f"Failed to fetch fish-data.json from GitHub: {response.status_code}")
+        except Exception as e:
+            print(f"Error fetching fish-data.json from GitHub: {e}")
+
+    def count_non_trash_fish(self):
+        count = 0
+        for fish, data in self.fish_data.items():
+            if isinstance(data, dict) and data.get('rarity', '').lower() != 'trash':
+                count += 1
+        return count
 
     def extract_fish_name (self ):
         if 'fish_caught_desc'not in self .coordinates :
@@ -694,7 +715,7 @@ class MouseAutomation :
             print (f'Error in send_webhook_message_with_timeout: {e }')
 
     def get_rarity_color (self ,rarity ):
-        rarity_colors ={'Common':12566463 ,'Uncommon':5094750 ,'Rare':2063812 }
+        rarity_colors ={'Common':12566463 ,'Uncommon':5094750 ,'Rare':2063812, 'Legendary':0xA11313 }
         return rarity_colors .get (rarity ,9127187 )
 
     def send_webhook_message (self ,fish_name ,mutation ):
@@ -1176,7 +1197,7 @@ class MouseAutomation :
                         self .automation_phase ='selling'
                     elif self .automation_phase =='selling':
                         if self .auto_sell_configuration =='Sell All (Recommended)':
-                            sell_count =22 
+                            sell_count = self.count_non_trash_fish()
                         else :
                             sell_count =self .fish_count_until_auto_sell 
                         self .send_phase_change_notification ('pre_sell','selling')
@@ -1319,6 +1340,7 @@ class MouseAutomation :
 
     def start_automation (self ):
         if self .running :
+            print("FishScope is already running, cancelling start...")
             return 
         if not self .toggle :
             self .toggle =True 
@@ -1352,6 +1374,9 @@ class MouseAutomation :
             self .send_macro_started_notification ()
 
     def stop_automation (self ):
+        if not self.running:
+            print("FishScope is not running, cancelling stop...")
+            return
         if hasattr (self ,'external_script_running')and self .external_script_running :
             print ('WARNING: External script is currently running. Stop will interrupt navigation.')
         print ('STOP ACTIVATED - Stopping macro...')
@@ -2770,6 +2795,9 @@ class CalibrationUI (QMainWindow ):
         creator_label =QLabel ('Created by: cresqnt')
         creator_label .setStyleSheet ('color: #888888; font-size: 11px;')
         footer_layout .addWidget (creator_label )
+        helper_label = QLabel('With help from: vex')
+        helper_label.setStyleSheet('color: #888888; font-size: 11px;')
+        footer_layout.addWidget(helper_label)
         discord_label =QLabel ('<a href="https://discord.gg/6cuCu6ymkX" style="color: #4a9eff; text-decoration: none;">Discord for help: .gg/6cuCu6ymkX</a>')
         discord_label .setStyleSheet ('color: #4a9eff; font-size: 9px;')
         discord_label .setOpenExternalLinks (True )
@@ -2819,7 +2847,7 @@ class CalibrationUI (QMainWindow ):
         notice_layout =QVBoxLayout (notice_group )
         notice_layout .setContentsMargins (12 ,15 ,12 ,12 )
         notice_layout .setSpacing (8 )
-        notice_text =QLabel ("⚠️ BEFORE STARTING THE MACRO:\n\n1. Configure Calibrations: Go to the 'Calibrations' tab and apply the correct calibration for your screen resolution and scale. Without proper calibrations, the macro will not work correctly. By defult, the macro is calibrated for the SELL ALL mode, in order to use the Legacy Sell mode you must calibrate the Sell Button to the normal sell button.\n\n2. Adjust Settings: Visit the 'Settings' tab to configure auto-sell behavior and other preferences according to your needs.\n\nAuto-Sell Modes Explained:\n• Legacy Mode: Sells the same number of times as fish caught (e.g., catch 10 fish → sell 10 times)\n• Sell All Mode (Recommended): Always sells exactly 22 times regardless of fish count\n\n✅ Sell All mode is recommended because it significantly reduces the time spent selling fish, making the macro more efficient overall.")
+        notice_text =QLabel (f"⚠️ BEFORE STARTING THE MACRO:\n\n1. Configure Calibrations: Go to the 'Calibrations' tab and apply the correct calibration for your screen resolution and scale. Without proper calibrations, the macro will not work correctly. By defult, the macro is calibrated for the SELL ALL mode, in order to use the Legacy Sell mode you must calibrate the Sell Button to the normal sell button.\n\n2. Adjust Settings: Visit the 'Settings' tab to configure auto-sell behavior and other preferences according to your needs.\n\nAuto-Sell Modes Explained:\n• Legacy Mode: Sells the same number of times as fish caught (e.g., catch 10 fish → sell 10 times)\n• Sell All Mode (Recommended): Always sells exactly {self.automation.count_non_trash_fish()} times regardless of fish count\n\n✅ Sell All mode is recommended because it significantly reduces the time spent selling fish, making the macro more efficient overall.")
         notice_text .setWordWrap (True )
         notice_text .setStyleSheet ('\n            QLabel {\n                color: #f8d7da;\n                background-color: #2c1b1e;\n                border: 2px solid #721c24;\n                border-radius: 6px;\n                padding: 12px;\n                font-size: 11px;\n                line-height: 1.4;\n                margin: 2px;\n            }\n        ')
         notice_layout .addWidget (notice_text )
@@ -3236,7 +3264,7 @@ class CalibrationUI (QMainWindow ):
         config_layout .addWidget (self .auto_sell_config_combo )
         config_layout .addStretch ()
         auto_sell_layout .addLayout (config_layout )
-        config_explanation =QLabel ('• Legacy: Sells the same number of times as fish caught\n• Sell All: Always sells exactly 22 times (recommended)')
+        config_explanation =QLabel (f'• Legacy: Sells the same number of times as fish caught\n• Sell All: Always sells exactly {self.automation.count_non_trash_fish()} times (recommended)')
         config_explanation .setWordWrap (True )
         config_explanation .setStyleSheet ('\n            QLabel {\n                color: #17a2b8;\n                background-color: #1c2b2f;\n                border: 1px solid #28536b;\n                border-radius: 4px;\n                padding: 8px;\n                font-size: 10px;\n                margin-top: 5px;\n            }\n        ')
         auto_sell_layout .addWidget (config_explanation )
