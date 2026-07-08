@@ -2,11 +2,9 @@ PyQt6
 Pillow
 keyboard
 autoit
-pyautogui
 requests
-numpy<2
+numpy
 pytesseract
-opencv-python<5
 pywin32
 fuzzywuzzy
 python-Levenshtein

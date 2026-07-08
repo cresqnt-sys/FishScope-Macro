@@ -120,7 +120,7 @@ class AutoReconnectManager :
             if self .is_pyinstaller :
                 print ('Auto-reconnect starting in compiled executable mode')
             if self .automation and hasattr (self .automation ,'send_webhook_notification'):
-                self .automation .send_webhook_notification ('roblox_reconnected','ðŸ”„ Auto Reconnect Triggered',f'Reconnecting after {self .auto_reconnect_time } seconds...',color =1548984 )
+                self .automation .send_webhook_notification ('roblox_reconnected','Auto Reconnect Triggered',f'Reconnecting after {self .auto_reconnect_time } seconds...',color =1548984 )
             print ('Closing Roblox instances...')
             self .close_roblox_instances ()
             time .sleep (5 )
@@ -361,7 +361,7 @@ class AutoReconnectManager :
 
     def _prepare_and_wait (self ,total_delay ):
         if self .automation and hasattr (self .automation ,'send_webhook_notification'):
-            self .automation .send_webhook_notification ('roblox_detected','ðŸŽ® RobloxPlayerBeta.exe Detected',f'Now waiting {total_delay } seconds before executing key sequence...',color =2664261 )
+            self .automation .send_webhook_notification ('roblox_detected','RobloxPlayerBeta.exe Detected',f'Now waiting {total_delay } seconds before executing key sequence...',color =2664261 )
         time .sleep (total_delay )
 
     def _send_backslash_sequence (self ,send_func ):
@@ -441,7 +441,7 @@ class AutoReconnectManager :
                     self .set_roblox_fullscreen ()
                 return True 
             time .sleep (0.5 )
-        print ('âš  Timeout waiting for RobloxPlayerBeta.exe to start')
+print ('Timeout waiting for RobloxPlayerBeta.exe to start')
         return False 
 
     def set_roblox_windowed (self ):
