@@ -1,10 +1,11 @@
-import json 
-import os 
-import requests 
-import time 
-from datetime import datetime ,timezone 
-from pathlib import Path 
-import shutil 
+import json
+import os
+import time
+from datetime import datetime, timezone
+from pathlib import Path
+import shutil
+import urllib.request
+import urllib.error
 
 class CalibrationManager :
 
@@ -23,41 +24,40 @@ class CalibrationManager :
         if self .verbose :
             print (message )
 
-    def download_calibrations (self ,timeout =10 ):
-        try :
-            print (f'Downloading calibrations from: {self .calibration_url }')
-            headers ={'User-Agent':'FishScope-Macro/1.0','Accept':'application/json','Content-Type':'application/json'}
-            response =requests .get (self .calibration_url ,timeout =timeout ,headers =headers )
-            response .raise_for_status ()
-            calibration_data =response .json ()
-            if not self .validate_calibration_data (calibration_data ):
-                raise ValueError ('Invalid calibration data format received from server')
-            print (f"Successfully downloaded {len (calibration_data .get ('calibrations',[]))} calibrations")
-            return (True ,'Calibrations downloaded successfully',calibration_data )
-        except requests .exceptions .Timeout :
-            error_msg =f'Request timed out after {timeout } seconds'
-            print (f'Error downloading calibrations: {error_msg }')
-            return (False ,error_msg ,None )
-        except requests .exceptions .ConnectionError :
-            error_msg ='Could not connect to calibration server'
-            print (f'Error downloading calibrations: {error_msg }')
-            return (False ,error_msg ,None )
-        except requests .exceptions .HTTPError as e :
-            error_msg =f'HTTP error {e .response .status_code }: {e .response .reason }'
-            print (f'Error downloading calibrations: {error_msg }')
-            return (False ,error_msg ,None )
-        except json .JSONDecodeError :
-            error_msg ='Invalid JSON response from server'
-            print (f'Error downloading calibrations: {error_msg }')
-            return (False ,error_msg ,None )
-        except ValueError as e :
-            error_msg =str (e )
-            print (f'Error downloading calibrations: {error_msg }')
-            return (False ,error_msg ,None )
-        except Exception as e :
-            error_msg =f'Unexpected error: {str (e )}'
-            print (f'Error downloading calibrations: {error_msg }')
-            return (False ,error_msg ,None )
+    def download_calibrations(self, timeout=10):
+        try:
+            print(f'Downloading calibrations from: {self.calibration_url}')
+            headers = {'User-Agent': 'FishScope-Macro/1.0', 'Accept': 'application/json'}
+            req = urllib.request.Request(self.calibration_url, headers=headers)
+            with urllib.request.urlopen(req, timeout=timeout) as response:
+                calibration_data = json.loads(response.read().decode('utf-8'))
+            if not self.validate_calibration_data(calibration_data):
+                raise ValueError('Invalid calibration data format received from server')
+            print(f"Successfully downloaded {len(calibration_data.get('calibrations', []))} calibrations")
+            return (True, 'Calibrations downloaded successfully', calibration_data)
+        except urllib.error.HTTPError as e:
+            error_msg = f'HTTP error {e.code}: {e.reason}'
+            print(f'Error downloading calibrations: {error_msg}')
+            return (False, error_msg, None)
+        except urllib.error.URLError as e:
+            if isinstance(e.reason, TimeoutError):
+                error_msg = f'Request timed out after {timeout} seconds'
+            else:
+                error_msg = 'Could not connect to calibration server'
+            print(f'Error downloading calibrations: {error_msg}')
+            return (False, error_msg, None)
+        except json.JSONDecodeError:
+            error_msg = 'Invalid JSON response from server'
+            print(f'Error downloading calibrations: {error_msg}')
+            return (False, error_msg, None)
+        except ValueError as e:
+            error_msg = str(e)
+            print(f'Error downloading calibrations: {error_msg}')
+            return (False, error_msg, None)
+        except Exception as e:
+            error_msg = f'Unexpected error: {str(e)}'
+            print(f'Error downloading calibrations: {error_msg}')
+            return (False, error_msg, None)
 
     def validate_calibration_data (self ,data ):
         try :

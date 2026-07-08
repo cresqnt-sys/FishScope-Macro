@@ -441,7 +441,7 @@ class AutoReconnectManager :
                     self .set_roblox_fullscreen ()
                 return True 
             time .sleep (0.5 )
-print ('Timeout waiting for RobloxPlayerBeta.exe to start')
+        print ('Timeout waiting for RobloxPlayerBeta.exe to start')
         return False 
 
     def set_roblox_windowed (self ):
