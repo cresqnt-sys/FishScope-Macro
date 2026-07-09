@@ -1,3 +1,37 @@
+# FishScope 2.4
+- Stable release including all beta improvements and fish database updates.
+### Added
+- Updated fish database with new fish species and corrected rarities
+- Dynamic sell-all count based on amount of fish in database
+- Legendary rarity color support for webhook notifications
+- Credited vex in footer (thanks vex!)
+- Configuration file now saves to %APPDATA%/FishScope instead of the folder in which FS is executed in
+
+### Changed
+- Fish data now syncs with the latest version from GitHub on startup
+- Improved auto-reconnect
+- Changed some user interface colors
+- Made user interface more consistent
+
+### Fixed
+- Guard against duplicate start/stop calls
+
+---
+
+# FishScope 2.4-Beta3
+- Refined timing and version comparison improvements.
+### Added
+- Version comparison now handles pre-release labels (Beta, Alpha, RC) correctly
+
+### Changed
+- Reduced backslash sequence delay from 60s to 30s
+- Increased auto-align camera delays for more reliable alignment
+
+### Fixed
+- Fixed up arrow emoji rendering in reconnect debug output
+
+---
+
 # FishScope 2.4-Beta2
 - Major update fixing many bugs and adding many improvements. The macro is now up to 3x better than it was before for fishing.
 ### Added

@@ -11,7 +11,7 @@ import concurrent .futures
 from PyQt6 .QtWidgets import QApplication ,QMainWindow ,QVBoxLayout ,QHBoxLayout ,QWidget ,QPushButton ,QLabel ,QFrame ,QScrollArea ,QMessageBox ,QGroupBox ,QComboBox ,QCheckBox ,QLineEdit ,QSpinBox ,QTabWidget ,QDialog ,QRadioButton ,QButtonGroup 
 from PyQt6 .QtCore import Qt ,QTimer ,pyqtSignal ,QObject ,QPoint ,QUrl 
 from PyQt6 .QtGui import QFont ,QCursor ,QPainter ,QPen ,QColor ,QIcon ,QLinearGradient ,QBrush ,QDesktopServices 
-from updater import AutoUpdater 
+from updater import AutoUpdater, CURRENT_VERSION 
 from auto_sell import AutoSellManager 
 from reconnect import AutoReconnectManager 
 from calibration_manager import CalibrationManager 
@@ -156,7 +156,8 @@ class MouseAutomation :
         self .running =False 
         self .thread =None 
         self .emergency_stop_event =threading .Event ()
-        self .config_file =os .path .join (os .getcwd (),'fishscopeconfig.json')
+        self .config_file =self ._resolve_config_path ()
+        self ._config_existed =os .path .exists (self .config_file )
         self .first_loop =True 
         self .cycle_count =0 
         self .start_time =None 
@@ -209,6 +210,8 @@ class MouseAutomation :
         except :
             self .numpy_available =False 
         self .load_calibration ()
+        if not self ._config_existed :
+            self .save_calibration ()
         self .load_fish_data ()
         self .auto_sell_manager =AutoSellManager (coordinates =self .coordinates ,apply_mouse_delay_callback =self .apply_mouse_delay )
 
@@ -370,6 +373,46 @@ class MouseAutomation :
             pass 
         fallback_coords ={'fish_button':(851 ,802 ),'white_diamond':(1176 ,805 ),'reel_bar':(757 ,728 ,1163 ,750 ),'completed_border':(1133 ,744 ),'close_button':(1108 ,337 ),'fish_caught_desc':(700 ,540 ,1035 ,685 ),'first_item':(830 ,409 ),'sell_button':(588 ,775 ),'confirm_button':(797 ,613 ),'mouse_idle_position':(999 ,190 ),'shaded_area':(951 ,731 ),'sell_fish_shop':(900 ,600 ),'collection_button':(950 ,650 ),'exit_collections':(1000 ,700 ),'exit_fish_shop':(1050 ,750 )}
         return fallback_coords 
+
+    def _resolve_config_path (self ):
+        appdata_root =os .getenv ('APPDATA')or os .path .expanduser ('~')
+        appdata_dir =os .path .join (appdata_root ,'FishScope')
+        appdata_config =os .path .join (appdata_dir ,'fishscopeconfig.json')
+        os .makedirs (appdata_dir ,exist_ok =True )
+        if os .path .exists (appdata_config ):
+            return appdata_config 
+        legacy_dirs =[]
+        if getattr (sys ,'frozen',False ):
+            legacy_dirs .append (os .path .dirname (sys .executable ))
+        legacy_dirs .append (os .getcwd ())
+        legacy_dirs .append (os .path .dirname (os .path .abspath (sys .argv [0])))
+        seen =set ()
+        for legacy_dir in legacy_dirs :
+            legacy =os .path .join (legacy_dir ,'fishscopeconfig.json')
+            legacy_abs =os .path .abspath (legacy )
+            if legacy_abs ==os .path .abspath (appdata_config ):
+                continue 
+            if legacy_abs in seen :
+                continue 
+            seen .add (legacy_abs )
+            if os .path .exists (legacy ):
+                try :
+                    shutil .copy2 (legacy ,appdata_config )
+                    try :
+                        os .remove (legacy )
+                    except Exception as e :
+                        print (f'Warning: could not delete legacy config {legacy }: {e }')
+                    legacy_backup =legacy +'.backup'
+                    if os .path .exists (legacy_backup ):
+                        try :
+                            os .remove (legacy_backup )
+                        except Exception :
+                            pass 
+                    print (f'Migrated config from {legacy } to {appdata_config }')
+                    return appdata_config 
+                except Exception as e :
+                    print (f'Warning: could not migrate legacy config from {legacy }: {e }')
+        return appdata_config 
 
     def save_calibration (self ):
         try :
@@ -2412,19 +2455,12 @@ class CalibrationUI (QMainWindow ):
         main_layout .setContentsMargins (15 ,15 ,15 ,15 )
         header_layout =QVBoxLayout ()
         header_layout .setSpacing (4 )
-        title_label =QLabel ('FishScope Macro')
+        title_label =QLabel (f'FishScope Macro v{CURRENT_VERSION}')
         title_font =QFont ('Segoe UI',18 ,QFont .Weight .Bold )
         title_label .setFont (title_font )
         title_label .setAlignment (Qt .AlignmentFlag .AlignCenter )
         title_label .setStyleSheet ('color: #ffffff; margin: 4px 0;')
         header_layout .addWidget (title_label )
-        subtitle_label =QLabel ('<a href="https://www.roblox.com/games/1980495071/Donations-D" style="color: #4a9eff; text-decoration: none;">Feel free to donate</a>')
-        subtitle_font =QFont ('Segoe UI',8 )
-        subtitle_label .setFont (subtitle_font )
-        subtitle_label .setAlignment (Qt .AlignmentFlag .AlignCenter )
-        subtitle_label .setStyleSheet ('color: #888888; margin-bottom: 6px;')
-        subtitle_label .setOpenExternalLinks (True )
-        header_layout .addWidget (subtitle_label )
         main_layout .addLayout (header_layout )
         self .tab_widget =QTabWidget ()
         self .create_controls_tab ()
@@ -2450,6 +2486,10 @@ class CalibrationUI (QMainWindow ):
         discord_label .setStyleSheet ('color: #4a9eff; font-size: 9px;')
         discord_label .setOpenExternalLinks (True )
         footer_layout .addWidget (discord_label )
+        donate_label = QLabel('<a href="https://www.roblox.com/games/1980495071/Donations-D" style="color: #4a9eff; text-decoration: none;">Feel free to donate</a>')
+        donate_label.setStyleSheet('color: #4a9eff; font-size: 9px;')
+        donate_label.setOpenExternalLinks(True)
+        footer_layout.addWidget(donate_label)
         footer_layout .addStretch ()
         main_layout .addLayout (footer_layout )
         QTimer .singleShot (1000 ,self .check_display_scale )
@@ -3254,7 +3294,7 @@ def main ():
     app =QApplication (sys .argv )
     app .setFont (QFont ('Segoe UI',9 ))
     app .setApplicationName ('FishScope')
-    app .setApplicationVersion ('1.0')
+    app .setApplicationVersion (CURRENT_VERSION )
     app .setOrganizationName ('cresqnt')
     if os .path .exists ('icon.ico'):
         app .setWindowIcon (QIcon ('icon.ico'))

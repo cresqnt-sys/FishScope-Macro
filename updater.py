@@ -7,7 +7,7 @@ from PyQt6 .QtGui import QFont
 import sys 
 import os 
 from packaging .version import parse as parse_version 
-CURRENT_VERSION ='2.4-Beta3'
+CURRENT_VERSION ='2.4'
 
 class UpdateChecker (QThread ):
     update_available =pyqtSignal (str ,str )
